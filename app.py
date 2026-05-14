@@ -352,6 +352,11 @@ def handle_card_click(n_clicks_list, id_list):
 
 
 if __name__ == "__main__":
+    import sys
+    import io
+    if sys.stdout.encoding.lower() != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        
     # 도커 환경 여부 체크 (환경 변수 또는 기본 설정 기반)
     is_docker = os.environ.get("DOCKER_ENV", False)
     debug_mode = not is_docker  # 도커 내부에서는 안정성을 위해 디버그 모드 비활성화 권장
@@ -359,4 +364,4 @@ if __name__ == "__main__":
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
     print("👉 로컬 접속: http://127.0.0.1:8050/")
     print("👉 도커 접속: http://localhost:8050/")
-    app.run_server(debug=debug_mode, host="0.0.0.0", port=8050)
+    app.run(debug=debug_mode, host="0.0.0.0", port=8050)
