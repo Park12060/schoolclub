@@ -1,0 +1,20 @@
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: daejeon-pharmacy-dashboard
+    restart: unless-stopped
+    ports:
+      - "8050:8050"
+    environment:
+      - DOCKER_ENV=true
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # 로컬 CSV 파일을 수정할 경우 컨테이너를 재빌드하지 않고도 즉시 반영되도록 볼륨 매핑
+      - .:/app
+    # 호스트 머신의 리소스를 과도하게 점유하지 않도록 제한 (선택적 최적화)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
