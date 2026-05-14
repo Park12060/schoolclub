@@ -1,0 +1,30 @@
+# Git 및 가상환경 캐시
+.git
+.gitignore
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE 및 OS 생성 파일
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# 구 버전 정적 웹 맵 에셋 (순수 파이썬 대시보드 환경 구축을 위해 배제)
+server.js
+pharmacies_data.js
+pharmacy_map.html
+node_modules
+*.ps1
+
+# 빌드 및 배포 에셋
+Dockerfile
+docker-compose.yml
+README.md
