@@ -39,29 +39,29 @@ GU_COLORS = {
 def load_integrated_data():
     records = []
     idx_counter = 0
+
+    # 1) 기존 약국 CSV_CONFIGS 처리 (기존 로직 유지)
     for cfg in CSV_CONFIGS:
         file_path = os.path.join(BASE_DIR, cfg["file"])
         if not os.path.exists(file_path):
             continue
-        
-        base_lat, base_lng = FALLBACK_COORDS[cfg["gu"]]
+
+        base_lat, base_lng = FALLBACK_COORDS.get(cfg["gu"], (36.3504, 127.3845))
         try:
             with open(file_path, encoding="euc-kr", errors="ignore") as f:
                 reader = csv.reader(f)
-                next(reader)  # 헤더 스킵
+                next(reader)
                 for row in reader:
                     cols = cfg["cols"]
-                    # 행 길이 체크
                     max_idx = max(cols.values())
                     if len(row) <= max_idx:
                         continue
-                    
+
                     name = row[cols["name"]].strip().strip('"').strip("'")
                     addr = row[cols["addr"]].strip().strip('"').strip("'")
                     phone = row[cols["phone"]].strip().strip('"').strip("'")
-                    
+
                     if len(addr) > 5:
-                        # 중심가 주변으로 분산 배치 (Jitter)
                         lat = base_lat + (random.random() - 0.5) * 0.05
                         lng = base_lng + (random.random() - 0.5) * 0.05
                         records.append({
@@ -72,13 +72,98 @@ def load_integrated_data():
                             "phone": phone if phone else "정보 없음",
                             "lat": lat,
                             "lng": lng,
-                            "color": GU_COLORS[cfg["gu"]],
+                            "color": GU_COLORS.get(cfg["gu"], "#888888"),
                             "type": "pharmacy"
                         })
                         idx_counter += 1
         except Exception as e:
             print(f"Error loading {cfg['file']}: {e}")
-            
+
+    # 2) 폐의약품 수거함 등 '폐' 관련 CSV 자동 검색 및 처리
+    for fname in os.listdir(BASE_DIR):
+        if not fname.lower().endswith('.csv'):
+            continue
+        if '폐' not in fname and '수거' not in fname:
+            continue
+
+        file_path = os.path.join(BASE_DIR, fname)
+        try:
+            with open(file_path, encoding='euc-kr', errors='ignore') as f:
+                reader = csv.reader(f)
+                headers = next(reader)
+                header_map = {h.strip(): i for i, h in enumerate(headers)}
+
+                # 가능한 컬럼 이름 매핑
+                name_idx = None
+                for candidate in ['수거장소명', '수거장소구분명', '수거장소', '수거함명', '수거함', '구분', '수거장소구분']:
+                    if candidate in header_map:
+                        name_idx = header_map[candidate]
+                        break
+
+                addr_idx = None
+                for candidate in ['도로명주소', '지번주소', '주소지', '주소']:
+                    if candidate in header_map:
+                        addr_idx = header_map[candidate]
+                        break
+
+                phone_idx = header_map.get('전화번호') if '전화번호' in header_map else None
+                lat_idx = None
+                lng_idx = None
+                for candidate in ['위도', 'lat', 'latitude']:
+                    if candidate in header_map:
+                        lat_idx = header_map[candidate]
+                        break
+                for candidate in ['경도', 'lon', 'longitude']:
+                    if candidate in header_map:
+                        lng_idx = header_map[candidate]
+                        break
+
+                # 구 이름은 파일명에서 추출
+                district = None
+                for gu in FALLBACK_COORDS.keys():
+                    if gu in fname:
+                        district = gu
+                        break
+                if district is None:
+                    district = '전체'
+
+                base_lat, base_lng = FALLBACK_COORDS.get(district, (36.3504, 127.3845))
+
+                for row in reader:
+                    try:
+                        name = row[name_idx].strip() if name_idx is not None and len(row) > name_idx else '수거함'
+                        addr = row[addr_idx].strip() if addr_idx is not None and len(row) > addr_idx else ''
+                        phone = row[phone_idx].strip() if phone_idx is not None and len(row) > phone_idx else ''
+
+                        if lat_idx is not None and lng_idx is not None and len(row) > max(lat_idx, lng_idx):
+                            try:
+                                lat = float(row[lat_idx])
+                                lng = float(row[lng_idx])
+                            except Exception:
+                                lat = base_lat + (random.random() - 0.5) * 0.02
+                                lng = base_lng + (random.random() - 0.5) * 0.02
+                        else:
+                            # 위도/경도 없으면 구 중심 근처로 jitter
+                            lat = base_lat + (random.random() - 0.5) * 0.02
+                            lng = base_lng + (random.random() - 0.5) * 0.02
+
+                        records.append({
+                            'id': idx_counter,
+                            'district': district,
+                            'name': name,
+                            'address': addr,
+                            'phone': phone if phone else '정보 없음',
+                            'lat': lat,
+                            'lng': lng,
+                            'color': GU_COLORS.get(district, '#ff7f50'),
+                            'type': 'collection'
+                        })
+                        idx_counter += 1
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"Error loading collection file {fname}: {e}")
+
     df = pd.DataFrame(records)
     expected_cols = ["id", "district", "name", "address", "phone", "lat", "lng", "color", "type"]
     for col in expected_cols:
