@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from dash import Dash, html, dcc, Input, Output, State, ctx
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
-BASE_DIR = r"c:\Users\parkj\IdeaProjects\schoolclub1"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CSV_CONFIGS = [
     {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
@@ -291,7 +291,24 @@ def update_map(search_val, district_val, selected_data):
             center_lat = target_row.iloc[0]["lat"]
             center_lng = target_row.iloc[0]["lng"]
             zoom_level = 15.5
-            
+
+    if dff.empty:
+        fig = go.Figure(go.Scattermapbox(lat=[], lon=[]))
+        fig.update_layout(
+            mapbox_style="carto-darkmatter",
+            mapbox_center={"lat": center_lat, "lon": center_lng},
+            mapbox_zoom=zoom_level,
+            margin={"r":0, "t":0, "l":0, "b":0},
+            paper_bgcolor="#0b0f19",
+            plot_bgcolor="#0b0f19",
+            legend=dict(
+                orientation="h", yanchor="top", y=0.98, xanchor="left", x=0.02,
+                bgcolor="rgba(18,23,35,0.8)", bordercolor="rgba(99,179,237,0.3)", borderwidth=1,
+                font=dict(color="#fff", size=12), title=None
+            )
+        )
+        return fig
+
     # Plotly Mapbox 산점도 맵 생성
     fig = px.scatter_mapbox(
         dff, 
@@ -359,4 +376,4 @@ if __name__ == "__main__":
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
     print("👉 로컬 접속: http://127.0.0.1:8050/")
     print("👉 도커 접속: http://localhost:8050/")
-    app.run_server(debug=debug_mode, host="0.0.0.0", port=8050)
+    app.run(debug=debug_mode, host="0.0.0.0", port=8050)
