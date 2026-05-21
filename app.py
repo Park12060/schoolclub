@@ -5,9 +5,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Dash, html, dcc, Input, Output, State, ctx
+import plotly.io as pio
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
-BASE_DIR = r"c:\Users\parkj\IdeaProjects\schoolclub1"
+BASE_DIR = os.path.dirname(__file__)
 
 CSV_CONFIGS = [
     {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
@@ -71,13 +72,24 @@ def load_integrated_data():
                             "phone": phone if phone else "정보 없음",
                             "lat": lat,
                             "lng": lng,
-                            "color": GU_COLORS[cfg["gu"]]
+                            "color": GU_COLORS[cfg["gu"]],
+                            "type": "pharmacy"
                         })
                         idx_counter += 1
         except Exception as e:
             print(f"Error loading {cfg['file']}: {e}")
             
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    expected_cols = ["id", "district", "name", "address", "phone", "lat", "lng", "color", "type"]
+    for col in expected_cols:
+        if col not in df.columns:
+            if col in ("lat", "lng"):
+                df[col] = pd.Series(dtype="float64")
+            elif col == "id":
+                df[col] = pd.Series(dtype="int64")
+            else:
+                df[col] = pd.Series(dtype="object")
+    return df[expected_cols]
 
 df_pharmacies = load_integrated_data()
 
@@ -201,12 +213,19 @@ app.layout = html.Div([
                 style={"height": "100%", "width": "100%"},
                 config={"displayModeBar": False}
             )
+        
+                    # 지도 줌 컨트롤 버튼 (오버레이)
+                    , html.Div([
+                        html.Button("+", id="zoom-in", n_clicks=0, style={"width":"40px","height":"40px","borderRadius":"6px","fontSize":"20px","marginBottom":"8px"}),
+                        html.Button("-", id="zoom-out", n_clicks=0, style={"width":"40px","height":"40px","borderRadius":"6px","fontSize":"20px"})
+                    ], style={"position":"absolute","right":"16px","top":"16px","display":"flex","flexDirection":"column","zIndex":999})
         ], style={"flex": "1", "height": "calc(100vh - 70px)", "position": "relative"})
         
     ], style={"display": "flex", "height": "calc(100vh - 70px)"}),
     
     # 클릭된 카드의 ID를 보관하는 스토어
     dcc.Store(id="selected-card-store", data=None)
+    , dcc.Store(id="map-zoom-store", data=11.5)
 ])
 
 
@@ -266,9 +285,10 @@ def update_sidebar(search_val, district_val):
     Output("pharmacy-map", "figure"),
     Input("search-input", "value"),
     Input("district-filter", "value"),
-    Input("selected-card-store", "data")
+    Input("selected-card-store", "data"),
+    Input("map-zoom-store", "data")
 )
-def update_map(search_val, district_val, selected_data):
+def update_map(search_val, district_val, selected_data, store_zoom):
     dff = df_pharmacies.copy()
     
     # 필터 적용
@@ -282,9 +302,9 @@ def update_map(search_val, district_val, selected_data):
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
-    zoom_level = 11.5
+    zoom_level = float(store_zoom) if store_zoom is not None else 11.5
     
-    # 선택된 약국이 있다면 중심을 거기로 이동
+    # 선택된 약국이 있다면 중심을 거기로 이동 및 확대
     if selected_data is not None:
         target_row = dff[dff["id"] == selected_data]
         if not target_row.empty:
@@ -292,24 +312,60 @@ def update_map(search_val, district_val, selected_data):
             center_lng = target_row.iloc[0]["lng"]
             zoom_level = 15.5
             
-    # Plotly Mapbox 산점도 맵 생성
-    fig = px.scatter_mapbox(
-        dff, 
-        lat="lat", 
-        lon="lng", 
-        hover_name="name",
-        hover_data={"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False},
-        color="district",
-        color_discrete_map=GU_COLORS,
-        size_max=12,
-        zoom=zoom_level,
-        center={"lat": center_lat, "lon": center_lng}
-    )
+    # Plotly Mapbox: 이모지 기반의 눈에 띄는 마커로 각 유형(type)을 구분해 그리기
+    fig = go.Figure()
+    # 타입별 이모지 매핑 (추후 'collection' 등 추가 가능)
+    type_icons = {
+        "pharmacy": "💊",
+        "collection": "🗑️"
+    }
+
+    if not dff.empty:
+        for t in dff["type"].fillna("pharmacy").unique():
+            subset = dff[dff["type"] == t]
+            if subset.empty:
+                continue
+
+            emoji = type_icons.get(t, "📍")
+            # 커스텀 hover 데이터
+            customdata = subset[["name", "address", "phone"]].values
+
+            fig.add_trace(go.Scattermapbox(
+                lat=subset["lat"],
+                lon=subset["lng"],
+                mode="markers+text",
+                text=[emoji] * len(subset),
+                textfont=dict(size=16, color="#ffffff"),
+                textposition="middle center",
+                marker=dict(
+                    size=26,
+                    color=subset["color"],
+                    opacity=0.95
+                ),
+                customdata=customdata,
+                hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>",
+                name=t
+            ))
+    else:
+        # 빈 데이터용 빈 Figure (맵은 빈 상태로 렌더링)
+        pass
     
-    # Mapbox 스타일 및 여백 설정 (carto-darkmatter 오픈소스 타일 적용)
-    fig.update_traces(marker=dict(size=10, opacity=0.85))
+    # Mapbox 스타일: 환경변수 MAPBOX_TOKEN이 있으면 사용자 토큰 사용, 없으면 open-street-map으로 폴백
+    mapbox_token = os.environ.get("MAPBOX_TOKEN")
+    requested_style = os.environ.get("MAPBOX_STYLE", "carto-darkmatter")
+    if mapbox_token:
+        try:
+            px.set_mapbox_access_token(mapbox_token)
+            mapbox_style = requested_style
+        except Exception:
+            mapbox_style = "open-street-map"
+    else:
+        # 토큰이 없으면 안전한 오픈스타일로 폴백
+        mapbox_style = "open-street-map"
+
     fig.update_layout(
-        mapbox_style="carto-darkmatter",
+        mapbox_style=mapbox_style,
+        mapbox=dict(center={"lat": center_lat, "lon": center_lng}, zoom=zoom_level),
         margin={"r":0, "t":0, "l":0, "b":0},
         paper_bgcolor="#0b0f19",
         plot_bgcolor="#0b0f19",
@@ -351,6 +407,35 @@ def handle_card_click(n_clicks_list, id_list):
     return None
 
 
+@app.callback(
+    Output("map-zoom-store", "data"),
+    Input("zoom-in", "n_clicks"),
+    Input("zoom-out", "n_clicks"),
+    State("map-zoom-store", "data")
+)
+def handle_zoom_buttons(zoom_in_clicks, zoom_out_clicks, current_zoom):
+    # 클릭 이벤트가 없으면 현재 줌 반환
+    try:
+        current_zoom = float(current_zoom) if current_zoom is not None else 11.5
+    except Exception:
+        current_zoom = 11.5
+
+    triggered = ctx.triggered_id
+    if not triggered:
+        return current_zoom
+
+    # 단순 증감 (0.5 단위)
+    step = 0.5
+    if triggered == "zoom-in":
+        new_zoom = min(current_zoom + step, 20)
+    elif triggered == "zoom-out":
+        new_zoom = max(current_zoom - step, 1)
+    else:
+        new_zoom = current_zoom
+
+    return new_zoom
+
+
 if __name__ == "__main__":
     # 도커 환경 여부 체크 (환경 변수 또는 기본 설정 기반)
     is_docker = os.environ.get("DOCKER_ENV", False)
@@ -358,5 +443,6 @@ if __name__ == "__main__":
     
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
     print("👉 로컬 접속: http://127.0.0.1:8050/")
-    print("👉 도커 접속: http://localhost:8050/")
-    app.run_server(debug=debug_mode, host="0.0.0.0", port=8050)
+    port = int(os.environ.get("PORT", 8050))
+    print(f"👉 도커 접속: http://localhost:{port}/")
+    app.run(debug=debug_mode, host="0.0.0.0", port=port)
