@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from dash import Dash, html, dcc, Input, Output, State, ctx, ClientsideFunction
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
-BASE_DIR = r"c:\Users\parkj\IdeaProjects\schoolclub1"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CSV_CONFIGS = [
     {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
@@ -122,7 +122,10 @@ def load_integrated_data():
         except Exception as e:
             print(f"Error loading {cfg['file']}: {e}")
             
-    return pd.DataFrame(records)
+    return pd.DataFrame.from_records(
+        records,
+        columns=["id", "district", "name", "address", "phone", "lat", "lng", "color"]
+    )
 
 df_pharmacies = load_integrated_data()
 
@@ -135,6 +138,8 @@ app.index_string = '''
 <!DOCTYPE html>
 <html>
     <head>
+        <meta charset="utf-8">
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
         {%metas%}
         <title>{%title%}</title>
         {%favicon%}
@@ -264,17 +269,18 @@ app.layout = html.Div([
         ]),
         
         # 현재 위치 입력
-        html.Div([
-            dcc.Input(
+        html.Div(
+            [dcc.Input(
                 id="location-input", type="text", placeholder="📍 현재 위치 입력 (예: 서구, 중구, 약국명...)",
                 style={
                     "width": "280px", "padding": "10px 16px", "borderRadius": "20px",
                     "border": "1px solid rgba(99,179,237,0.3)", "backgroundColor": "rgba(255,255,255,0.05)",
                     "color": "#fff", "outline": "none", "fontSize": "13px"
-                },
-                title="구(서구, 동구 등) 또는 약국명을 입력하면 그 근처 약국 5개가 자동 표시됩니다."
-            )
-        ], style={"maxWidth": "300px", "margin": "0 12px"}),
+                }
+            )],
+            style={"maxWidth": "300px", "margin": "0 12px"},
+            title="구(서구, 동구 등) 또는 약국명을 입력하면 그 근처 약국 5개가 자동 표시됩니다."
+        ),
         
         # 위치 추적 허용 버튼
         html.Button(
@@ -508,10 +514,20 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
             zoom_level = 15.5
             
     # Plotly Mapbox 산점도 맵 생성
+    if dff.empty or "name" not in dff.columns:
+        fig = go.Figure(go.Scattermapbox())
+        fig.update_layout(
+            mapbox_style="carto-darkmatter",
+            margin={"r":0, "t":0, "l":0, "b":0},
+            paper_bgcolor="#0b0f19",
+            plot_bgcolor="#0b0f19"
+        )
+        return fig
+
     fig = px.scatter_mapbox(
-        dff, 
-        lat="lat", 
-        lon="lng", 
+        dff,
+        lat="lat",
+        lon="lng",
         hover_name="name",
         hover_data={"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False},
         color="district",
@@ -689,4 +705,10 @@ if __name__ == "__main__":
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
     print("👉 로컬 접속: http://127.0.0.1:8050/")
     print("👉 도커 접속: http://localhost:8050/")
-    app.run(debug=debug_mode, host="0.0.0.0", port=8050)
+    app.run(
+        host="0.0.0.0",
+        port=8050,
+        debug=debug_mode,
+        dev_tools_hot_reload=False,
+        dev_tools_ui=False
+    )
