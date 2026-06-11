@@ -206,6 +206,17 @@ app.index_string = '''
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background: rgba(99, 179, 237, 0.3); border-radius: 3px; }
             ::-webkit-scrollbar-thumb:hover { background: rgba(99, 179, 237, 0.5); }
+            
+            /* 지역 선택 시 색상 스타일 */
+            #district-filter-container .radioList > label {
+                transition: all 0.2s ease !important;
+            }
+            #district-filter-container input:checked + label {
+                font-weight: 600 !important;
+                border-color: rgba(99, 179, 237, 0.8) !important;
+                background-color: rgba(99, 179, 237, 0.15) !important;
+                box-shadow: 0 0 12px rgba(99, 179, 237, 0.3) !important;
+            }
         </style>
     </head>
     <body>
@@ -244,32 +255,58 @@ app.layout = html.Div([
             )
         ], style={"flex": "1", "maxWidth": "320px", "margin": "0 20px"}),
         
-        # 구별 라디오 필터 버튼
-        dcc.RadioItems(
-            id="district-filter",
-            options=[
-                {"label": "전체", "value": "전체"},
-                {"label": "서구", "value": "서구"},
-                {"label": "동구", "value": "동구"},
-                {"label": "대덕구", "value": "대덕구"},
-                {"label": "유성구", "value": "유성구"},
-                {"label": "중구", "value": "중구"}
-            ],
-            value="전체",
-            inline=True,
-            style={"display": "flex", "gap": "10px"},
-            inputStyle={"display": "none"},
-            labelStyle={
-                "padding": "6px 14px", "borderRadius": "20px", "fontSize": "13px",
-                "border": "1px solid rgba(255,255,255,0.15)", "backgroundColor": "rgba(255,255,255,0.05)",
-                "cursor": "pointer", "transition": "all 0.2s"
-            }
-        ),
+        # 지역 필터 (라디오 버튼) - 선택 시 색상 표시
+        html.Div([
+            html.Span("지역:", style={"fontSize": "13px", "color": "#a0aec0", "marginRight": "8px"}),
+            html.Div([
+                dcc.RadioItems(
+                    id="district-filter",
+                    options=[
+                        {"label": "전체", "value": "전체"},
+                        {"label": "서구", "value": "서구"},
+                        {"label": "동구", "value": "동구"},
+                        {"label": "대덕구", "value": "대덕구"},
+                        {"label": "유성구", "value": "유성구"},
+                        {"label": "중구", "value": "중구"}
+                    ],
+                    value=None,
+                    inline=True,
+                    style={"display": "flex", "gap": "8px"},
+                    inputStyle={"display": "none"},
+                    labelStyle={
+                        "padding": "6px 12px", "borderRadius": "16px", "fontSize": "12px",
+                        "border": "1px solid rgba(255,255,255,0.15)", "backgroundColor": "rgba(255,255,255,0.05)",
+                        "cursor": "pointer", "transition": "all 0.2s"
+                    }
+                )
+            ], id="district-filter-container", style={"display": "flex", "gap": "8px"})
+        ], style={"display": "flex", "alignItems": "center", "gap": "10px"}),
+        
+        # 장소 유형 필터 (체크박스)
+        html.Div([
+            html.Span("표시:", style={"fontSize": "13px", "color": "#a0aec0", "marginRight": "8px"}),
+            dcc.Checklist(
+                id="type-filter",
+                options=[
+                    {"label": "  약국", "value": "pharmacy"},
+                    {"label": "  폐의약품 수거함", "value": "collection"}
+                ],
+                value=["pharmacy", "collection"],
+                inline=True,
+                style={"display": "flex", "gap": "12px"},
+                inputStyle={"margin": "0 4px 0 0"},
+                labelStyle={
+                    "fontSize": "12px", "color": "#e2e8f0", "cursor": "pointer",
+                    "padding": "4px 8px", "borderRadius": "6px",
+                    "transition": "all 0.2s"
+                }
+            )
+        ], style={"display": "flex", "alignItems": "center", "gap": "10px"}),
         
         # 전체 통계 카운터
         html.Div([
             html.Div(id="stat-counter", style={"fontSize": "18px", "fontWeight": "700", "color": "#63b3ed"}),
-            html.Div("검색된 약국 수", style={"fontSize": "10px", "color": "#718096"})
+            html.Div("검색된 결과", style={"fontSize": "10px", "color": "#718096"})
         ], style={"textAlign": "center", "marginLeft": "20px"})
         
     ], style={
@@ -314,22 +351,68 @@ app.layout = html.Div([
 ])
 
 
-# ===== 4. 콜백 (상호작용 처리) =====
+# ===== 4. 클라이언트 사이드 콜백 (지역 선택 색상 강조) =====
+app.clientside_callback(
+    """
+    function(value) {
+        const container = document.getElementById('district-filter-container');
+        if (!container) return value;
+        
+        setTimeout(function() {
+            const labels = container.querySelectorAll('label');
+            labels.forEach(label => {
+                const input = label.querySelector('input[type="radio"]');
+                if (input) {
+                    if (input.checked) {
+                        label.style.backgroundColor = 'rgba(99, 179, 237, 0.4)';
+                        label.style.borderColor = '#3fa0ed';
+                        label.style.boxShadow = '0 0 20px rgba(99, 179, 237, 0.6)';
+                        label.style.fontWeight = '700';
+                    } else {
+                        label.style.backgroundColor = 'rgba(255,255,255,0.05)';
+                        label.style.borderColor = 'rgba(255,255,255,0.15)';
+                        label.style.boxShadow = 'none';
+                        label.style.fontWeight = '400';
+                    }
+                }
+            });
+        }, 50);
+        return value;
+    }
+    """,
+    Output('district-filter', 'value'),
+    Input('district-filter', 'value'),
+    prevent_initial_call=False
+)
+
+
+# ===== 5. 콜백 (상호작용 처리) =====
 @app.callback(
     Output("pharmacy-cards-container", "children"),
     Output("stat-counter", "children"),
     Input("search-input", "value"),
-    Input("district-filter", "value")
+    Input("district-filter", "value"),
+    Input("type-filter", "value")
 )
-def update_sidebar(search_val, district_val):
+def update_sidebar(search_val, district_val, type_val):
+    # 지역이 선택되지 않았으면 빈 결과 반환
+    if district_val is None or district_val == "":
+        return [html.Div("지역을 선택해주세요 👇", style={
+            "color": "#a0aec0", "textAlign": "center", "marginTop": "40px", "fontSize": "14px"
+        })], "0개"
+    
     dff = df_pharmacies.copy()
     
     # 필터 적용
-    if district_val and district_val != "전체":
+    if district_val != "전체":
         dff = dff[dff["district"] == district_val]
+    
+    # 타입 필터 적용 (약국/수거함)
+    if type_val:
+        dff = dff[dff["type"].isin(type_val)]
         
     if search_val:
-        search_val = search_val.lower().trim() if hasattr(search_val, 'trim') else search_val.lower().strip()
+        search_val = search_val.lower().strip()
         dff = dff[dff["name"].str.lower().str.contains(search_val) | 
                   dff["address"].str.lower().str.contains(search_val)]
         
@@ -370,15 +453,38 @@ def update_sidebar(search_val, district_val):
     Output("pharmacy-map", "figure"),
     Input("search-input", "value"),
     Input("district-filter", "value"),
+    Input("type-filter", "value"),
     Input("selected-card-store", "data"),
     Input("map-zoom-store", "data")
 )
-def update_map(search_val, district_val, selected_data, store_zoom):
+def update_map(search_val, district_val, type_val, selected_data, store_zoom):
+    # 지역이 선택되지 않았으면 빈 맵 반환
+    if district_val is None or district_val == "":
+        fig = go.Figure()
+        fig.update_layout(
+            mapbox_style="open-street-map",
+            mapbox=dict(center={"lat": 36.3504, "lon": 127.3845}, zoom=11.5),
+            margin={"r":0, "t":0, "l":0, "b":0},
+            paper_bgcolor="#0b0f19",
+            plot_bgcolor="#0b0f19",
+            annotations=[dict(
+                text="<b>지역을 선택해주세요 👇</b><br>혼잡함을 줄이기 위해 특정 지역을 선택하면 정보가 표시됩니다.",
+                xref="paper", yref="paper", x=0.5, y=0.5,
+                showarrow=False, font=dict(size=16, color="#a0aec0"),
+                align="center"
+            )]
+        )
+        return fig
+    
     dff = df_pharmacies.copy()
     
     # 필터 적용
-    if district_val and district_val != "전체":
+    if district_val != "전체":
         dff = dff[dff["district"] == district_val]
+    
+    # 타입 필터 적용 (약국/수거함)
+    if type_val:
+        dff = dff[dff["type"].isin(type_val)]
         
     if search_val:
         search_val = search_val.lower().strip()
@@ -420,12 +526,12 @@ def update_map(search_val, district_val, selected_data, store_zoom):
                 lon=subset["lng"],
                 mode="markers+text",
                 text=[emoji] * len(subset),
-                textfont=dict(size=16, color="#ffffff"),
+                textfont=dict(size=10, color="#ffffff"),
                 textposition="middle center",
                 marker=dict(
-                    size=26,
+                    size=10,
                     color=subset["color"],
-                    opacity=0.95
+                    opacity=0.85
                 ),
                 customdata=customdata,
                 hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>",
