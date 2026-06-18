@@ -17,9 +17,7 @@ from dash import Dash, html, dcc, Input, Output, State, ctx
 KST = timezone(timedelta(hours=9))
 
 # SSL 컨텍스트 (HTTP→HTTPS 리다이렉트 처리)
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
+# Using default secure SSL context for verification
 
 def now_kst():
     return datetime.now(KST)
