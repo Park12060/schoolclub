@@ -71,7 +71,8 @@ def load_integrated_data():
                             "phone": phone if phone else "정보 없음",
                             "lat": lat,
                             "lng": lng,
-                            "color": GU_COLORS[cfg["gu"]]
+                            "color": GU_COLORS[cfg["gu"]],
+                            "tylenol_stock": random.randint(60, 70)
                         })
                         idx_counter += 1
         except Exception as e:
@@ -224,10 +225,13 @@ def update_sidebar(search_val, district_val):
     if district_val and district_val != "전체":
         dff = dff[dff["district"] == district_val]
         
+    is_tylenol_search = False
     if search_val:
-        search_val = search_val.lower().trim() if hasattr(search_val, 'trim') else search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        search_val = search_val.lower().strip()
+        is_tylenol_search = "타이레놀" in search_val
+        if not is_tylenol_search:
+            dff = dff[dff["name"].str.lower().str.contains(search_val) | 
+                      dff["address"].str.lower().str.contains(search_val)]
         
     # 통계 문자열
     count_str = f"{len(dff):,}개"
@@ -235,7 +239,7 @@ def update_sidebar(search_val, district_val):
     # 리스트 카드 생성
     cards = []
     for _, row in dff.iterrows():
-        card = html.Div([
+        content = [
             html.Div([
                 html.Span(row["district"], style={
                     "backgroundColor": f"{row['color']}22", "color": row["color"],
@@ -246,7 +250,11 @@ def update_sidebar(search_val, district_val):
             html.Div(row["name"], style={"fontSize": "15px", "fontWeight": "700", "color": "#fff", "marginBottom": "4px"}),
             html.Div(f"📍 {row['address']}", style={"fontSize": "12px", "color": "#a0aec0", "marginBottom": "4px", "lineHeight": "1.3"}),
             html.Div(f"📞 {row['phone']}", style={"fontSize": "12px", "color": "#9f7aea", "fontWeight": "500"})
-        ], 
+        ]
+        if is_tylenol_search:
+            content.append(html.Div(f"🧾 타이레놀 재고: {row['tylenol_stock']}개", style={"fontSize": "12px", "color": "#81e6d9", "fontWeight": "600", "marginTop": "6px"}))
+
+        card = html.Div(content, 
         id={"type": "pharm-card", "index": row["id"]},
         n_clicks=0,
         style={
@@ -275,10 +283,13 @@ def update_map(search_val, district_val, selected_data):
     if district_val and district_val != "전체":
         dff = dff[dff["district"] == district_val]
         
+    is_tylenol_search = False
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        is_tylenol_search = "타이레놀" in search_val
+        if not is_tylenol_search:
+            dff = dff[dff["name"].str.lower().str.contains(search_val) | 
+                      dff["address"].str.lower().str.contains(search_val)]
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
@@ -310,12 +321,16 @@ def update_map(search_val, district_val, selected_data):
         return fig
 
     # Plotly Mapbox 산점도 맵 생성
+    hover_data = {"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False}
+    if is_tylenol_search:
+        hover_data["tylenol_stock"] = True
+
     fig = px.scatter_mapbox(
         dff, 
         lat="lat", 
         lon="lng", 
         hover_name="name",
-        hover_data={"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False},
+        hover_data=hover_data,
         color="district",
         color_discrete_map=GU_COLORS,
         size_max=12,
@@ -361,7 +376,7 @@ def handle_card_click(n_clicks_list, id_list):
         # 클릭 횟수가 0보다 큰 경우에만 유효 이벤트로 판단
         for clicks, card_id in zip(n_clicks_list, id_list):
             if card_id["index"] == clicked_idx and clicks > 0:
-                return clicked_idx
+                return card_id["index"]
     except Exception:
         pass
         
@@ -376,4 +391,4 @@ if __name__ == "__main__":
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
     print("👉 로컬 접속: http://127.0.0.1:8050/")
     print("👉 도커 접속: http://localhost:8050/")
-    app.run(debug=debug_mode, host="0.0.0.0", port=8050)
+    app.run(debug=debug_mode, use_reloader=False, host="0.0.0.0", port=8050)
