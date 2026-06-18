@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from dash import Dash, html, dcc, Input, Output, State, ctx
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
-BASE_DIR = os.path.abspath(os.path.dirname(__file__) or ".")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CSV_CONFIGS = [
     {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
