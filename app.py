@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from dash import Dash, html, dcc, Input, Output, State, ctx
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
-BASE_DIR = r"c:\Users\parkj\IdeaProjects\schoolclub1"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CSV_CONFIGS = [
     {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
@@ -35,32 +35,48 @@ GU_COLORS = {
     "중구": "#e879f9"
 }
 
+
+def parse_bool_env(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def parse_port_env(value, default=8050):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        print(f"⚠️ 잘못된 PORT 값({value})이 감지되어 기본값 {default}를 사용합니다.")
+        return default
+
 def load_integrated_data():
     records = []
     idx_counter = 0
+
+    # 1) 기존 약국 CSV_CONFIGS 처리 (기존 로직 유지)
     for cfg in CSV_CONFIGS:
         file_path = os.path.join(BASE_DIR, cfg["file"])
         if not os.path.exists(file_path):
             continue
-        
-        base_lat, base_lng = FALLBACK_COORDS[cfg["gu"]]
+
+        base_lat, base_lng = FALLBACK_COORDS.get(cfg["gu"], (36.3504, 127.3845))
         try:
             with open(file_path, encoding="euc-kr", errors="ignore") as f:
                 reader = csv.reader(f)
-                next(reader)  # 헤더 스킵
+                next(reader)
                 for row in reader:
                     cols = cfg["cols"]
-                    # 행 길이 체크
                     max_idx = max(cols.values())
                     if len(row) <= max_idx:
                         continue
-                    
+
                     name = row[cols["name"]].strip().strip('"').strip("'")
                     addr = row[cols["addr"]].strip().strip('"').strip("'")
                     phone = row[cols["phone"]].strip().strip('"').strip("'")
-                    
+
                     if len(addr) > 5:
-                        # 중심가 주변으로 분산 배치 (Jitter)
                         lat = base_lat + (random.random() - 0.5) * 0.05
                         lng = base_lng + (random.random() - 0.5) * 0.05
                         records.append({
@@ -71,13 +87,109 @@ def load_integrated_data():
                             "phone": phone if phone else "정보 없음",
                             "lat": lat,
                             "lng": lng,
-                            "color": GU_COLORS[cfg["gu"]]
+                            "color": GU_COLORS.get(cfg["gu"], "#888888"),
+                            "type": "pharmacy"
                         })
                         idx_counter += 1
         except Exception as e:
             print(f"Error loading {cfg['file']}: {e}")
-            
-    return pd.DataFrame(records)
+
+    # 2) 폐의약품 수거함 등 '폐' 관련 CSV 자동 검색 및 처리
+    for fname in os.listdir(BASE_DIR):
+        if not fname.lower().endswith('.csv'):
+            continue
+        if '폐' not in fname and '수거' not in fname:
+            continue
+
+        file_path = os.path.join(BASE_DIR, fname)
+        try:
+            with open(file_path, encoding='euc-kr', errors='ignore') as f:
+                reader = csv.reader(f)
+                headers = next(reader)
+                header_map = {h.strip(): i for i, h in enumerate(headers)}
+
+                # 가능한 컬럼 이름 매핑
+                name_idx = None
+                for candidate in ['수거장소명', '수거장소구분명', '수거장소', '수거함명', '수거함', '구분', '수거장소구분']:
+                    if candidate in header_map:
+                        name_idx = header_map[candidate]
+                        break
+
+                addr_idx = None
+                for candidate in ['도로명주소', '지번주소', '주소지', '주소']:
+                    if candidate in header_map:
+                        addr_idx = header_map[candidate]
+                        break
+
+                phone_idx = header_map.get('전화번호') if '전화번호' in header_map else None
+                lat_idx = None
+                lng_idx = None
+                for candidate in ['위도', 'lat', 'latitude']:
+                    if candidate in header_map:
+                        lat_idx = header_map[candidate]
+                        break
+                for candidate in ['경도', 'lon', 'longitude']:
+                    if candidate in header_map:
+                        lng_idx = header_map[candidate]
+                        break
+
+                # 구 이름은 파일명에서 추출
+                district = None
+                for gu in FALLBACK_COORDS.keys():
+                    if gu in fname:
+                        district = gu
+                        break
+                if district is None:
+                    district = '전체'
+
+                base_lat, base_lng = FALLBACK_COORDS.get(district, (36.3504, 127.3845))
+
+                for row in reader:
+                    try:
+                        name = row[name_idx].strip() if name_idx is not None and len(row) > name_idx else '수거함'
+                        addr = row[addr_idx].strip() if addr_idx is not None and len(row) > addr_idx else ''
+                        phone = row[phone_idx].strip() if phone_idx is not None and len(row) > phone_idx else ''
+
+                        if lat_idx is not None and lng_idx is not None and len(row) > max(lat_idx, lng_idx):
+                            try:
+                                lat = float(row[lat_idx])
+                                lng = float(row[lng_idx])
+                            except Exception:
+                                lat = base_lat + (random.random() - 0.5) * 0.02
+                                lng = base_lng + (random.random() - 0.5) * 0.02
+                        else:
+                            # 위도/경도 없으면 구 중심 근처로 jitter
+                            lat = base_lat + (random.random() - 0.5) * 0.02
+                            lng = base_lng + (random.random() - 0.5) * 0.02
+
+                        records.append({
+                            'id': idx_counter,
+                            'district': district,
+                            'name': name,
+                            'address': addr,
+                            'phone': phone if phone else '정보 없음',
+                            'lat': lat,
+                            'lng': lng,
+                            'color': GU_COLORS.get(district, '#ff7f50'),
+                            'type': 'collection'
+                        })
+                        idx_counter += 1
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"Error loading collection file {fname}: {e}")
+
+    df = pd.DataFrame(records)
+    expected_cols = ["id", "district", "name", "address", "phone", "lat", "lng", "color", "type"]
+    for col in expected_cols:
+        if col not in df.columns:
+            if col in ("lat", "lng"):
+                df[col] = pd.Series(dtype="float64")
+            elif col == "id":
+                df[col] = pd.Series(dtype="int64")
+            else:
+                df[col] = pd.Series(dtype="object")
+    return df[expected_cols]
 
 df_pharmacies = load_integrated_data()
 
@@ -109,6 +221,17 @@ app.index_string = '''
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background: rgba(99, 179, 237, 0.3); border-radius: 3px; }
             ::-webkit-scrollbar-thumb:hover { background: rgba(99, 179, 237, 0.5); }
+            
+            /* 지역 선택 시 색상 스타일 */
+            #district-filter-container .radioList > label {
+                transition: all 0.2s ease !important;
+            }
+            #district-filter-container input:checked + label {
+                font-weight: 600 !important;
+                border-color: rgba(99, 179, 237, 0.8) !important;
+                background-color: rgba(99, 179, 237, 0.15) !important;
+                box-shadow: 0 0 12px rgba(99, 179, 237, 0.3) !important;
+            }
         </style>
     </head>
     <body>
@@ -147,32 +270,58 @@ app.layout = html.Div([
             )
         ], style={"flex": "1", "maxWidth": "320px", "margin": "0 20px"}),
         
-        # 구별 라디오 필터 버튼
-        dcc.RadioItems(
-            id="district-filter",
-            options=[
-                {"label": "전체", "value": "전체"},
-                {"label": "서구", "value": "서구"},
-                {"label": "동구", "value": "동구"},
-                {"label": "대덕구", "value": "대덕구"},
-                {"label": "유성구", "value": "유성구"},
-                {"label": "중구", "value": "중구"}
-            ],
-            value="전체",
-            inline=True,
-            style={"display": "flex", "gap": "10px"},
-            inputStyle={"display": "none"},
-            labelStyle={
-                "padding": "6px 14px", "borderRadius": "20px", "fontSize": "13px",
-                "border": "1px solid rgba(255,255,255,0.15)", "backgroundColor": "rgba(255,255,255,0.05)",
-                "cursor": "pointer", "transition": "all 0.2s"
-            }
-        ),
+        # 지역 필터 (라디오 버튼) - 선택 시 색상 표시
+        html.Div([
+            html.Span("지역:", style={"fontSize": "13px", "color": "#a0aec0", "marginRight": "8px"}),
+            html.Div([
+                dcc.RadioItems(
+                    id="district-filter",
+                    options=[
+                        {"label": "전체", "value": "전체"},
+                        {"label": "서구", "value": "서구"},
+                        {"label": "동구", "value": "동구"},
+                        {"label": "대덕구", "value": "대덕구"},
+                        {"label": "유성구", "value": "유성구"},
+                        {"label": "중구", "value": "중구"}
+                    ],
+                    value=None,
+                    inline=True,
+                    style={"display": "flex", "gap": "8px"},
+                    inputStyle={"display": "none"},
+                    labelStyle={
+                        "padding": "6px 12px", "borderRadius": "16px", "fontSize": "12px",
+                        "border": "1px solid rgba(255,255,255,0.15)", "backgroundColor": "rgba(255,255,255,0.05)",
+                        "cursor": "pointer", "transition": "all 0.2s"
+                    }
+                )
+            ], id="district-filter-container", style={"display": "flex", "gap": "8px"})
+        ], style={"display": "flex", "alignItems": "center", "gap": "10px"}),
+        
+        # 장소 유형 필터 (체크박스)
+        html.Div([
+            html.Span("표시:", style={"fontSize": "13px", "color": "#a0aec0", "marginRight": "8px"}),
+            dcc.Checklist(
+                id="type-filter",
+                options=[
+                    {"label": "  약국", "value": "pharmacy"},
+                    {"label": "  폐의약품 수거함", "value": "collection"}
+                ],
+                value=["pharmacy", "collection"],
+                inline=True,
+                style={"display": "flex", "gap": "12px"},
+                inputStyle={"margin": "0 4px 0 0"},
+                labelStyle={
+                    "fontSize": "12px", "color": "#e2e8f0", "cursor": "pointer",
+                    "padding": "4px 8px", "borderRadius": "6px",
+                    "transition": "all 0.2s"
+                }
+            )
+        ], style={"display": "flex", "alignItems": "center", "gap": "10px"}),
         
         # 전체 통계 카운터
         html.Div([
             html.Div(id="stat-counter", style={"fontSize": "18px", "fontWeight": "700", "color": "#63b3ed"}),
-            html.Div("검색된 약국 수", style={"fontSize": "10px", "color": "#718096"})
+            html.Div("검색된 결과", style={"fontSize": "10px", "color": "#718096"})
         ], style={"textAlign": "center", "marginLeft": "20px"})
         
     ], style={
@@ -201,33 +350,87 @@ app.layout = html.Div([
                 style={"height": "100%", "width": "100%"},
                 config={"displayModeBar": False}
             )
+        
+                    # 지도 줌 컨트롤 버튼 (오버레이)
+                    , html.Div([
+                        html.Button("+", id="zoom-in", n_clicks=0, style={"width":"40px","height":"40px","borderRadius":"6px","fontSize":"20px","marginBottom":"8px"}),
+                        html.Button("-", id="zoom-out", n_clicks=0, style={"width":"40px","height":"40px","borderRadius":"6px","fontSize":"20px"})
+                    ], style={"position":"absolute","right":"16px","top":"16px","display":"flex","flexDirection":"column","zIndex":999})
         ], style={"flex": "1", "height": "calc(100vh - 70px)", "position": "relative"})
         
     ], style={"display": "flex", "height": "calc(100vh - 70px)"}),
     
     # 클릭된 카드의 ID를 보관하는 스토어
-    dcc.Store(id="selected-card-store", data=None)
+    dcc.Store(id="selected-card-store", data=None),
+    dcc.Store(id="map-zoom-store", data=11.5),
+    dcc.Store(id="district-style-store", data=None)
 ])
 
 
-# ===== 4. 콜백 (상호작용 처리) =====
+# ===== 4. 클라이언트 사이드 콜백 (지역 선택 색상 강조) =====
+app.clientside_callback(
+    """
+    function(value) {
+        const container = document.getElementById('district-filter-container');
+        if (!container) return value;
+        
+        setTimeout(function() {
+            const labels = container.querySelectorAll('label');
+            labels.forEach(label => {
+                const input = label.querySelector('input[type="radio"]');
+                if (input) {
+                    if (input.checked) {
+                        label.style.backgroundColor = 'rgba(99, 179, 237, 0.4)';
+                        label.style.borderColor = '#3fa0ed';
+                        label.style.boxShadow = '0 0 20px rgba(99, 179, 237, 0.6)';
+                        label.style.fontWeight = '700';
+                    } else {
+                        label.style.backgroundColor = 'rgba(255,255,255,0.05)';
+                        label.style.borderColor = 'rgba(255,255,255,0.15)';
+                        label.style.boxShadow = 'none';
+                        label.style.fontWeight = '400';
+                    }
+                }
+            });
+        }, 50);
+        return value;
+    }
+    """,
+    Output('district-style-store', 'data'),
+    Input('district-filter', 'value'),
+    prevent_initial_call=False
+)
+
+
+# ===== 5. 콜백 (상호작용 처리) =====
 @app.callback(
     Output("pharmacy-cards-container", "children"),
     Output("stat-counter", "children"),
     Input("search-input", "value"),
-    Input("district-filter", "value")
+    Input("district-filter", "value"),
+    Input("type-filter", "value")
 )
-def update_sidebar(search_val, district_val):
+def update_sidebar(search_val, district_val, type_val):
+    # 지역이 선택되지 않았으면 빈 결과 반환
+    if district_val is None or district_val == "":
+        return [html.Div("지역을 선택해주세요 👇", style={
+            "color": "#a0aec0", "textAlign": "center", "marginTop": "40px", "fontSize": "14px"
+        })], "0개"
+    
     dff = df_pharmacies.copy()
     
     # 필터 적용
-    if district_val and district_val != "전체":
+    if district_val != "전체":
         dff = dff[dff["district"] == district_val]
+    
+    # 타입 필터 적용 (약국/수거함)
+    if type_val is not None:
+        dff = dff[dff["type"].isin(type_val)]
         
     if search_val:
-        search_val = search_val.lower().trim() if hasattr(search_val, 'trim') else search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        search_val = search_val.lower().strip()
+        dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
+                  dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
         
     # 통계 문자열
     count_str = f"{len(dff):,}개"
@@ -266,50 +469,111 @@ def update_sidebar(search_val, district_val):
     Output("pharmacy-map", "figure"),
     Input("search-input", "value"),
     Input("district-filter", "value"),
-    Input("selected-card-store", "data")
+    Input("type-filter", "value"),
+    Input("selected-card-store", "data"),
+    Input("map-zoom-store", "data")
 )
-def update_map(search_val, district_val, selected_data):
+def update_map(search_val, district_val, type_val, selected_data, store_zoom):
+    # 지역이 선택되지 않았으면 빈 맵 반환
+    if district_val is None or district_val == "":
+        fig = go.Figure()
+        fig.update_layout(
+            mapbox_style="open-street-map",
+            mapbox=dict(center={"lat": 36.3504, "lon": 127.3845}, zoom=11.5),
+            margin={"r":0, "t":0, "l":0, "b":0},
+            paper_bgcolor="#0b0f19",
+            plot_bgcolor="#0b0f19",
+            annotations=[dict(
+                text="<b>지역을 선택해주세요 👇</b><br>혼잡함을 줄이기 위해 특정 지역을 선택하면 정보가 표시됩니다.",
+                xref="paper", yref="paper", x=0.5, y=0.5,
+                showarrow=False, font=dict(size=16, color="#a0aec0"),
+                align="center"
+            )]
+        )
+        return fig
+    
     dff = df_pharmacies.copy()
     
     # 필터 적용
-    if district_val and district_val != "전체":
+    if district_val != "전체":
         dff = dff[dff["district"] == district_val]
+    
+    # 타입 필터 적용 (약국/수거함)
+    if type_val is not None:
+        dff = dff[dff["type"].isin(type_val)]
         
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
+                  dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
-    zoom_level = 11.5
+    zoom_level = float(store_zoom) if store_zoom is not None else 11.5
     
-    # 선택된 약국이 있다면 중심을 거기로 이동
+    # 선택된 약국이 있다면 중심을 거기로 이동 및 확대
     if selected_data is not None:
         target_row = dff[dff["id"] == selected_data]
         if not target_row.empty:
             center_lat = target_row.iloc[0]["lat"]
             center_lng = target_row.iloc[0]["lng"]
-            zoom_level = 15.5
+            if ctx.triggered_id == "selected-card-store":
+                zoom_level = 15.5
             
-    # Plotly Mapbox 산점도 맵 생성
-    fig = px.scatter_mapbox(
-        dff, 
-        lat="lat", 
-        lon="lng", 
-        hover_name="name",
-        hover_data={"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False},
-        color="district",
-        color_discrete_map=GU_COLORS,
-        size_max=12,
-        zoom=zoom_level,
-        center={"lat": center_lat, "lon": center_lng}
-    )
+    # Plotly Mapbox: 이모지 기반의 눈에 띄는 마커로 각 유형(type)을 구분해 그리기
+    fig = go.Figure()
+    # 타입별 이모지 매핑 (추후 'collection' 등 추가 가능)
+    type_icons = {
+        "pharmacy": "💊",
+        "collection": "🗑️"
+    }
+
+    if not dff.empty:
+        for t in dff["type"].fillna("pharmacy").unique():
+            subset = dff[dff["type"] == t]
+            if subset.empty:
+                continue
+
+            emoji = type_icons.get(t, "📍")
+            # 커스텀 hover 데이터
+            customdata = subset[["name", "address", "phone"]].values
+
+            fig.add_trace(go.Scattermapbox(
+                lat=subset["lat"],
+                lon=subset["lng"],
+                mode="markers+text",
+                text=[emoji] * len(subset),
+                textfont=dict(size=10, color="#ffffff"),
+                textposition="middle center",
+                marker=dict(
+                    size=10,
+                    color=subset["color"],
+                    opacity=0.85
+                ),
+                customdata=customdata,
+                hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>",
+                name=t
+            ))
+    else:
+        # 빈 데이터용 빈 Figure (맵은 빈 상태로 렌더링)
+        pass
     
-    # Mapbox 스타일 및 여백 설정 (carto-darkmatter 오픈소스 타일 적용)
-    fig.update_traces(marker=dict(size=10, opacity=0.85))
+    # Mapbox 스타일: 환경변수 MAPBOX_TOKEN이 있으면 사용자 토큰 사용, 없으면 open-street-map으로 폴백
+    mapbox_token = os.environ.get("MAPBOX_TOKEN")
+    requested_style = os.environ.get("MAPBOX_STYLE", "carto-darkmatter")
+    if mapbox_token:
+        try:
+            px.set_mapbox_access_token(mapbox_token)
+            mapbox_style = requested_style
+        except Exception:
+            mapbox_style = "open-street-map"
+    else:
+        # 토큰이 없으면 안전한 오픈스타일로 폴백
+        mapbox_style = "open-street-map"
+
     fig.update_layout(
-        mapbox_style="carto-darkmatter",
+        mapbox_style=mapbox_style,
+        mapbox=dict(center={"lat": center_lat, "lon": center_lng}, zoom=zoom_level),
         margin={"r":0, "t":0, "l":0, "b":0},
         paper_bgcolor="#0b0f19",
         plot_bgcolor="#0b0f19",
@@ -351,6 +615,35 @@ def handle_card_click(n_clicks_list, id_list):
     return None
 
 
+@app.callback(
+    Output("map-zoom-store", "data"),
+    Input("zoom-in", "n_clicks"),
+    Input("zoom-out", "n_clicks"),
+    State("map-zoom-store", "data")
+)
+def handle_zoom_buttons(zoom_in_clicks, zoom_out_clicks, current_zoom):
+    # 클릭 이벤트가 없으면 현재 줌 반환
+    try:
+        current_zoom = float(current_zoom) if current_zoom is not None else 11.5
+    except Exception:
+        current_zoom = 11.5
+
+    triggered = ctx.triggered_id
+    if not triggered or (triggered == "zoom-in" and not zoom_in_clicks) or (triggered == "zoom-out" and not zoom_out_clicks):
+        return current_zoom
+
+    # 단순 증감 (0.5 단위)
+    step = 0.5
+    if triggered == "zoom-in":
+        new_zoom = min(current_zoom + step, 20)
+    elif triggered == "zoom-out":
+        new_zoom = max(current_zoom - step, 1)
+    else:
+        new_zoom = current_zoom
+
+    return new_zoom
+
+
 if __name__ == "__main__":
     import sys
     import io
@@ -358,10 +651,11 @@ if __name__ == "__main__":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
         
     # 도커 환경 여부 체크 (환경 변수 또는 기본 설정 기반)
-    is_docker = os.environ.get("DOCKER_ENV", False)
+    is_docker = parse_bool_env(os.environ.get("DOCKER_ENV"))
     debug_mode = not is_docker  # 도커 내부에서는 안정성을 위해 디버그 모드 비활성화 권장
+    port = parse_port_env(os.environ.get("PORT", 8050), default=8050)
     
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
-    print("👉 로컬 접속: http://127.0.0.1:8050/")
-    print("👉 도커 접속: http://localhost:8050/")
-    app.run(debug=debug_mode, host="0.0.0.0", port=8050)
+    print(f"👉 로컬 접속: http://127.0.0.1:{port}/")
+    print(f"👉 도커 접속: http://localhost:{port}/")
+    app.run(debug=debug_mode, host="0.0.0.0", port=port)
