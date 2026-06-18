@@ -5,10 +5,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Dash, html, dcc, Input, Output, State, ctx
-import plotly.io as pio
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = os.path.abspath(os.path.dirname(__file__) or ".")
 
 CSV_CONFIGS = [
     {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
@@ -348,6 +347,7 @@ app.layout = html.Div([
     # 클릭된 카드의 ID를 보관하는 스토어
     dcc.Store(id="selected-card-store", data=None)
     , dcc.Store(id="map-zoom-store", data=11.5)
+    , dcc.Store(id="district-style-store", data=None)
 ])
 
 
@@ -380,7 +380,7 @@ app.clientside_callback(
         return value;
     }
     """,
-    Output('district-filter', 'value'),
+    Output('district-style-store', 'data'),
     Input('district-filter', 'value'),
     prevent_initial_call=False
 )
@@ -408,13 +408,13 @@ def update_sidebar(search_val, district_val, type_val):
         dff = dff[dff["district"] == district_val]
     
     # 타입 필터 적용 (약국/수거함)
-    if type_val:
+    if type_val is not None:
         dff = dff[dff["type"].isin(type_val)]
         
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
+                  dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
         
     # 통계 문자열
     count_str = f"{len(dff):,}개"
@@ -483,13 +483,13 @@ def update_map(search_val, district_val, type_val, selected_data, store_zoom):
         dff = dff[dff["district"] == district_val]
     
     # 타입 필터 적용 (약국/수거함)
-    if type_val:
+    if type_val is not None:
         dff = dff[dff["type"].isin(type_val)]
         
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
+                  dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
@@ -501,7 +501,8 @@ def update_map(search_val, district_val, type_val, selected_data, store_zoom):
         if not target_row.empty:
             center_lat = target_row.iloc[0]["lat"]
             center_lng = target_row.iloc[0]["lng"]
-            zoom_level = 15.5
+            if ctx.triggered_id == "selected-card-store":
+                zoom_level = 15.5
             
     # Plotly Mapbox: 이모지 기반의 눈에 띄는 마커로 각 유형(type)을 구분해 그리기
     fig = go.Figure()
@@ -628,12 +629,19 @@ def handle_zoom_buttons(zoom_in_clicks, zoom_out_clicks, current_zoom):
 
 
 if __name__ == "__main__":
+    def parse_bool_env(value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
     # 도커 환경 여부 체크 (환경 변수 또는 기본 설정 기반)
-    is_docker = os.environ.get("DOCKER_ENV", False)
+    is_docker = parse_bool_env(os.environ.get("DOCKER_ENV"))
     debug_mode = not is_docker  # 도커 내부에서는 안정성을 위해 디버그 모드 비활성화 권장
+    port = int(os.environ.get("PORT", 8050))
     
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
-    print("👉 로컬 접속: http://127.0.0.1:8050/")
-    port = int(os.environ.get("PORT", 8050))
+    print(f"👉 로컬 접속: http://127.0.0.1:{port}/")
     print(f"👉 도커 접속: http://localhost:{port}/")
     app.run(debug=debug_mode, host="0.0.0.0", port=port)
