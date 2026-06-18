@@ -361,9 +361,9 @@ app.layout = html.Div([
     ], style={"display": "flex", "height": "calc(100vh - 70px)"}),
     
     # 클릭된 카드의 ID를 보관하는 스토어
-    dcc.Store(id="selected-card-store", data=None)
-    , dcc.Store(id="map-zoom-store", data=11.5)
-    , dcc.Store(id="district-style-store", data=None)
+    dcc.Store(id="selected-card-store", data=None),
+    dcc.Store(id="map-zoom-store", data=11.5),
+    dcc.Store(id="district-style-store", data=None)
 ])
 
 
