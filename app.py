@@ -35,6 +35,22 @@ GU_COLORS = {
     "중구": "#e879f9"
 }
 
+
+def parse_bool_env(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def parse_port_env(value, default=8050):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        print(f"⚠️ 잘못된 PORT 값({value})이 감지되어 기본값 {default}를 사용합니다.")
+        return default
+
 def load_integrated_data():
     records = []
     idx_counter = 0
@@ -629,17 +645,10 @@ def handle_zoom_buttons(zoom_in_clicks, zoom_out_clicks, current_zoom):
 
 
 if __name__ == "__main__":
-    def parse_bool_env(value):
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return False
-        return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
     # 도커 환경 여부 체크 (환경 변수 또는 기본 설정 기반)
     is_docker = parse_bool_env(os.environ.get("DOCKER_ENV"))
     debug_mode = not is_docker  # 도커 내부에서는 안정성을 위해 디버그 모드 비활성화 권장
-    port = int(os.environ.get("PORT", 8050))
+    port = parse_port_env(os.environ.get("PORT", 8050), default=8050)
     
     print("🚀 대전 약국 대시보드 (Plotly Dash) 서버를 시작합니다...")
     print(f"👉 로컬 접속: http://127.0.0.1:{port}/")
