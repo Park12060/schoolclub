@@ -629,7 +629,7 @@ def handle_zoom_buttons(zoom_in_clicks, zoom_out_clicks, current_zoom):
         current_zoom = 11.5
 
     triggered = ctx.triggered_id
-    if not triggered:
+    if not triggered or (triggered == "zoom-in" and not zoom_in_clicks) or (triggered == "zoom-out" and not zoom_out_clicks):
         return current_zoom
 
     # 단순 증감 (0.5 단위)
