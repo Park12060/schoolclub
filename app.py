@@ -645,6 +645,11 @@ def handle_zoom_buttons(zoom_in_clicks, zoom_out_clicks, current_zoom):
 
 
 if __name__ == "__main__":
+    import sys
+    import io
+    if sys.stdout.encoding.lower() != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        
     # 도커 환경 여부 체크 (환경 변수 또는 기본 설정 기반)
     is_docker = parse_bool_env(os.environ.get("DOCKER_ENV"))
     debug_mode = not is_docker  # 도커 내부에서는 안정성을 위해 디버그 모드 비활성화 권장
