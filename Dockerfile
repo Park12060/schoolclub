@@ -1,5 +1,5 @@
 # Python 3.11 슬림 이미지를 기반으로 설정 (안정성 및 경량화)
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # 환경 변수 설정 (파이썬 버퍼링 제거 및 기본 인코딩 지정)
 ENV PYTHONUNBUFFERED=1 \
@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # 시스템 의존성 업데이트 및 필수 라이브러리 설치 후 캐시 정리
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
