@@ -88,7 +88,8 @@ def load_integrated_data():
                             "lat": lat,
                             "lng": lng,
                             "color": GU_COLORS.get(cfg["gu"], "#888888"),
-                            "type": "pharmacy"
+                            "type": "pharmacy",
+                            "tylenol_stock": random.randint(60, 70)
                         })
                         idx_counter += 1
         except Exception as e:
@@ -171,7 +172,8 @@ def load_integrated_data():
                             'lat': lat,
                             'lng': lng,
                             'color': GU_COLORS.get(district, '#ff7f50'),
-                            'type': 'collection'
+                            'type': 'collection',
+                            'tylenol_stock': None
                         })
                         idx_counter += 1
                     except Exception:
@@ -180,7 +182,7 @@ def load_integrated_data():
             print(f"Error loading collection file {fname}: {e}")
 
     df = pd.DataFrame(records)
-    expected_cols = ["id", "district", "name", "address", "phone", "lat", "lng", "color", "type"]
+    expected_cols = ["id", "district", "name", "address", "phone", "lat", "lng", "color", "type", "tylenol_stock"]
     for col in expected_cols:
         if col not in df.columns:
             if col in ("lat", "lng"):
@@ -427,10 +429,13 @@ def update_sidebar(search_val, district_val, type_val):
     if type_val is not None:
         dff = dff[dff["type"].isin(type_val)]
         
+    is_tylenol_search = False
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
-                  dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
+        is_tylenol_search = "타이레놀" in search_val
+        if not is_tylenol_search:
+            dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
+                      dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
         
     # 통계 문자열
     count_str = f"{len(dff):,}개"
@@ -438,7 +443,7 @@ def update_sidebar(search_val, district_val, type_val):
     # 리스트 카드 생성
     cards = []
     for _, row in dff.iterrows():
-        card = html.Div([
+        content = [
             html.Div([
                 html.Span(row["district"], style={
                     "backgroundColor": f"{row['color']}22", "color": row["color"],
@@ -449,7 +454,11 @@ def update_sidebar(search_val, district_val, type_val):
             html.Div(row["name"], style={"fontSize": "15px", "fontWeight": "700", "color": "#fff", "marginBottom": "4px"}),
             html.Div(f"📍 {row['address']}", style={"fontSize": "12px", "color": "#a0aec0", "marginBottom": "4px", "lineHeight": "1.3"}),
             html.Div(f"📞 {row['phone']}", style={"fontSize": "12px", "color": "#9f7aea", "fontWeight": "500"})
-        ], 
+        ]
+        if is_tylenol_search and row.get("type") == "pharmacy" and pd.notna(row.get("tylenol_stock")):
+            content.append(html.Div(f"🧾 타이레놀 재고: {int(row['tylenol_stock'])}개", style={"fontSize": "12px", "color": "#81e6d9", "fontWeight": "600", "marginTop": "6px"}))
+
+        card = html.Div(content, 
         id={"type": "pharm-card", "index": row["id"]},
         n_clicks=0,
         style={
@@ -502,10 +511,13 @@ def update_map(search_val, district_val, type_val, selected_data, store_zoom):
     if type_val is not None:
         dff = dff[dff["type"].isin(type_val)]
         
+    is_tylenol_search = False
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
-                  dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
+        is_tylenol_search = "타이레놀" in search_val
+        if not is_tylenol_search:
+            dff = dff[dff["name"].str.lower().str.contains(search_val, regex=False, na=False) | 
+                      dff["address"].str.lower().str.contains(search_val, regex=False, na=False)]
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
@@ -519,7 +531,7 @@ def update_map(search_val, district_val, type_val, selected_data, store_zoom):
             center_lng = target_row.iloc[0]["lng"]
             if ctx.triggered_id == "selected-card-store":
                 zoom_level = 15.5
-            
+
     # Plotly Mapbox: 이모지 기반의 눈에 띄는 마커로 각 유형(type)을 구분해 그리기
     fig = go.Figure()
     # 타입별 이모지 매핑 (추후 'collection' 등 추가 가능)
@@ -608,7 +620,7 @@ def handle_card_click(n_clicks_list, id_list):
         # 클릭 횟수가 0보다 큰 경우에만 유효 이벤트로 판단
         for clicks, card_id in zip(n_clicks_list, id_list):
             if card_id["index"] == clicked_idx and clicks > 0:
-                return clicked_idx
+                return card_id["index"]
     except Exception:
         pass
         
