@@ -486,9 +486,9 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
         dff = dff[dff["district"] == district_val]
     
     # 현재 위치 입력이 있으면 주소로 필터링
-    if location_val:
+    if location_val and not (nearby_data and nearby_data.get("pharmacy_ids")):
         location_val = location_val.lower().strip()
-        dff = dff[dff["address"].str.lower().str.contains(location_val)]
+        dff = dff[dff["address"].str.lower().str.contains(location_val, regex=False, na=False)]
         
     if search_val:
         search_val = search_val.lower().strip()
