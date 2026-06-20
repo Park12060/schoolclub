@@ -7,6 +7,7 @@ import threading
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+import math
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
@@ -31,6 +32,81 @@ API_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pharm
 
 DISTRICTS = ['서구', '동구', '대덕구', '유성구', '중구']
 
+# ===== 2. CSV 및 Fallback 설정 =====
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CSV_CONFIGS = [
+    {"file": "대전광역시 서구_약국현황_20250820.csv",    "gu": "서구",  "cols": {"name": 1, "addr": 2, "phone": 3}},
+    {"file": "대전광역시 동구 약국 현황_20250701.csv",   "gu": "동구",  "cols": {"name": 1, "addr": 3, "phone": 2}},
+    {"file": "대전광역시 대덕구_약국정보_20250101.csv",  "gu": "대덕구","cols": {"name": 0, "addr": 1, "phone": 2}},
+    {"file": "대전광역시 유성구_약국현황_20250731.csv",  "gu": "유성구","cols": {"name": 2, "addr": 3, "phone": 4}},
+    {"file": "대전광역시 중구 약국 정보_20250905.csv",   "gu": "중구",  "cols": {"name": 1, "addr": 4, "phone": 2}},
+]
+
+FALLBACK_COORDS = {
+    "서구": (36.3554, 127.3838),
+    "동구": (36.3315, 127.4545),
+    "대덕구": (36.3466, 127.4157),
+    "유성구": (36.3622, 127.3563),
+    "중구": (36.3256, 127.4209),
+}
+
+GU_COLORS = {
+    "서구": "#f5576c",
+    "동구": "#4facfe",
+    "대덕구": "#43e97b",
+    "유성구": "#fee140",
+    "중구": "#e879f9",
+}
+
+# 공공심야약국 판별 기준: 평일 22시 이후까지 운영
+NIGHT_CLOSE_THRESHOLD = 2200  # 22:00 이후 마감이면 심야약국으로 분류
+
+# ===== 3. 거리 계산 및 주소 추론 (Haversine Formula) =====
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    두 좌표 사이의 거리를 킬로미터 단위로 계산 (Haversine 공식)
+    """
+    R = 6371  # 지구 반지름 (km)
+    
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+    
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return R * c
+
+def infer_coordinates_from_address(address_text, pharmacies_df):
+    """
+    입력된 주소 텍스트로부터 좌표 추론
+    1. 구 이름과 일치 확인 (예: "서구", "동구")
+    2. 약국 주소와 일치 확인
+    3. 모두 실패 시 None 반환
+    """
+    if not address_text:
+        return None
+    
+    text = address_text.lower().strip()
+    
+    # 1. 구 이름 확인
+    for gu, coords in FALLBACK_COORDS.items():
+        if gu.lower() in text:
+            return {"lat": coords[0], "lon": coords[1], "source": "gu_name"}
+    
+    # 2. 약국 주소 검색 (입력된 텍스트 포함)
+    for _, row in pharmacies_df.iterrows():
+        if text in row["address"].lower():
+            return {"lat": row["lat"], "lon": row["lon"], "source": "pharmacy_address", "name": row["name"]}
+    
+    return None
+
+# ===== 4. API & CSV 데이터 처리 로직 =====
 def fetch_pharmacies_for_district(district: str, max_rows: int = 500) -> list:
     """공공 API로 약국 목록 + 운영시간 + 실제 좌표 조회 (전체 페이지 수집)"""
     city_enc = urllib.parse.quote('대전광역시')
@@ -136,37 +212,6 @@ def fetch_all_from_api() -> list:
     return all_records
 
 
-# ===== 2. CSV 폴백 데이터 로드 =====
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-CSV_CONFIGS = [
-    {"file": "대전광역시 서구_약국현황_20250820.csv",    "gu": "서구",  "cols": {"name": 1, "addr": 2, "phone": 3}},
-    {"file": "대전광역시 동구 약국 현황_20250701.csv",   "gu": "동구",  "cols": {"name": 1, "addr": 3, "phone": 2}},
-    {"file": "대전광역시 대덕구_약국정보_20250101.csv",  "gu": "대덕구","cols": {"name": 0, "addr": 1, "phone": 2}},
-    {"file": "대전광역시 유성구_약국현황_20250731.csv",  "gu": "유성구","cols": {"name": 2, "addr": 3, "phone": 4}},
-    {"file": "대전광역시 중구 약국 정보_20250905.csv",   "gu": "중구",  "cols": {"name": 1, "addr": 4, "phone": 2}},
-]
-
-FALLBACK_COORDS = {
-    "서구": (36.3554, 127.3838),
-    "동구": (36.3315, 127.4545),
-    "대덕구": (36.3466, 127.4157),
-    "유성구": (36.3622, 127.3563),
-    "중구": (36.3256, 127.4209),
-}
-
-GU_COLORS = {
-    "서구": "#f5576c",
-    "동구": "#4facfe",
-    "대덕구": "#43e97b",
-    "유성구": "#fee140",
-    "중구": "#e879f9",
-}
-
-# 공공심야약국 판별 기준: 평일 22시 이후까지 운영
-NIGHT_CLOSE_THRESHOLD = 2200  # 22:00 이후 마감이면 심야약국으로 분류
-
-
 def _parse_time(t: str) -> int:
     """'0900' → 900, '2130' → 2130, 빈 문자열 → -1"""
     try:
@@ -264,7 +309,7 @@ def load_from_csv_fallback() -> list:
     return records
 
 
-# ===== 3. 데이터 초기화 =====
+# ===== 5. 데이터 초기화 =====
 def load_data() -> pd.DataFrame:
     # 1) API 캐시 먼저 시도
     api_data = load_api_cache()
@@ -305,7 +350,7 @@ df_pharmacies = load_data()
 print(f'[READY] 총 {len(df_pharmacies)}개 약국 로드 / 심야약국 {df_pharmacies["is_night"].sum()}개')
 
 
-# ===== 4. Dash 앱 초기화 =====
+# ===== 6. Dash 앱 초기화 =====
 app = Dash(__name__, title="대전광역시 약국 대시보드")
 server = app.server
 
@@ -313,6 +358,8 @@ app.index_string = '''
 <!DOCTYPE html>
 <html>
     <head>
+        <meta charset="utf-8">
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
         {%metas%}
         <title>{%title%}</title>
         {%favicon%}
@@ -374,11 +421,83 @@ app.index_string = '''
             {%scripts%}
             {%renderer%}
         </footer>
+        <script>
+            // 전역 변수로 현재 사용자 위치 저장
+            window.currentUserLocation = null;
+            
+            // Geolocation 및 거리 계산
+            function getDistance(lat1, lon1, lat2, lon2) {
+                const R = 6371; // 지구 반지름 (km)
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = 
+                    Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return (R * c).toFixed(2);
+            }
+            
+            // GPS 위치 요청 함수
+            function getLocation() {
+                if (!navigator.geolocation) {
+                    alert("브라우저가 Geolocation을 지원하지 않습니다.");
+                    return;
+                }
+                
+                // 로딩 상태 표시
+                const btn = document.getElementById('gps-button');
+                if (btn) {
+                    btn.textContent = '⏳ 위치 검색 중...';
+                    btn.disabled = true;
+                }
+                
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        const coords = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude,
+                            accuracy: position.coords.accuracy
+                        };
+                        window.currentUserLocation = coords;
+                        
+                        // Dash 콜백 트리거를 위해 Store 업데이트
+                        const event = new CustomEvent('userLocationUpdate', { detail: coords });
+                        document.dispatchEvent(event);
+                        
+                        // 버튼 상태 복원
+                        if (btn) {
+                            btn.textContent = '📍 위치 추적 허용';
+                            btn.disabled = false;
+                            btn.style.backgroundColor = 'rgba(99, 179, 237, 0.3)';
+                            btn.style.borderColor = 'rgba(99, 179, 237, 0.8)';
+                        }
+                        
+                        console.log('위치 정보 획득:', coords);
+                    },
+                    function(error) {
+                        console.error("위치 정보 오류:", error.message);
+                        alert("위치 접근이 거부되었습니다.\\n브라우저 설정을 확인하세요.");
+                        
+                        // 버튼 상태 복원
+                        if (btn) {
+                            btn.textContent = '📍 위치 추적 허용';
+                            btn.disabled = false;
+                        }
+                    },
+                    { 
+                        enableHighAccuracy: true, 
+                        timeout: 10000, 
+                        maximumAge: 0 
+                    }
+                );
+            }
+        </script>
     </body>
 </html>
 '''
 
-# ===== 5. 레이아웃 =====
+# ===== 7. 레이아웃 =====
 app.layout = html.Div([
 
     # ── 상단 헤더 ──
@@ -393,6 +512,33 @@ app.layout = html.Div([
             html.Div(id="clock-display"),
         ], style={"display": "flex", "flexDirection": "column", "gap": "2px"}),
 
+        # 현재 위치 입력
+        html.Div(
+            [dcc.Input(
+                id="location-input", type="text", placeholder="📍 현재 위치 (예: 서구, 중구, 약국명...)",
+                style={
+                    "width": "220px", "padding": "8px 16px", "borderRadius": "20px",
+                    "border": "1px solid rgba(99,179,237,0.3)", "backgroundColor": "rgba(255,255,255,0.05)",
+                    "color": "#fff", "outline": "none", "fontSize": "13px"
+                }
+            )],
+            style={"maxWidth": "230px", "margin": "0 8px"},
+            title="구(서구, 동구 등) 또는 약국명을 입력하면 그 근처 약국 5개가 자동 표시됩니다."
+        ),
+        
+        # 위치 추적 허용 버튼
+        html.Button(
+            "📍 위치 추적 허용",
+            id="gps-button",
+            n_clicks=0,
+            style={
+                "padding": "8px 14px", "borderRadius": "20px", "fontSize": "13px",
+                "border": "1px solid rgba(99,179,237,0.5)", "backgroundColor": "rgba(99,179,237,0.15)",
+                "color": "#63b3ed", "cursor": "pointer", "transition": "all 0.2s",
+                "fontWeight": "500"
+            }
+        ),
+
         # 검색바
         html.Div([
             dcc.Input(
@@ -400,13 +546,13 @@ app.layout = html.Div([
                 placeholder="약국명 또는 주소 검색...",
                 debounce=True,
                 style={
-                    "width": "260px", "padding": "8px 16px", "borderRadius": "20px",
+                    "width": "220px", "padding": "8px 16px", "borderRadius": "20px",
                     "border": "1px solid rgba(99,179,237,0.3)",
                     "backgroundColor": "rgba(255,255,255,0.05)",
                     "color": "#fff", "outline": "none", "fontSize": "13px"
                 }
             )
-        ], style={"flex": "1", "maxWidth": "280px", "margin": "0 16px"}),
+        ], style={"flex": "1", "maxWidth": "230px", "margin": "0 8px"}),
 
         # 구별 필터
         dcc.RadioItems(
@@ -449,13 +595,13 @@ app.layout = html.Div([
                     "cursor": "pointer", "transition": "all 0.2s", "color": "#e2e8f0"
                 }
             )
-        ], style={"marginLeft": "12px"}),
+        ], style={"marginLeft": "8px"}),
 
         # 카운터
         html.Div([
             html.Div(id="stat-counter", style={"fontSize": "18px", "fontWeight": "700", "color": "#63b3ed"}),
             html.Div("검색된 약국", style={"fontSize": "10px", "color": "#718096"})
-        ], style={"textAlign": "center", "marginLeft": "16px", "minWidth": "60px"}),
+        ], style={"textAlign": "center", "marginLeft": "12px", "minWidth": "60px"}),
 
     ], style={
         "display": "flex", "alignItems": "center", "justifyContent": "space-between",
@@ -463,7 +609,7 @@ app.layout = html.Div([
         "backgroundColor": "#121723",
         "borderBottom": "1px solid rgba(99,179,237,0.15)",
         "boxShadow": "0 4px 20px rgba(0,0,0,0.3)",
-        "height": "68px", "flexWrap": "nowrap", "gap": "8px"
+        "height": "68px", "flexWrap": "nowrap", "gap": "4px"
     }),
 
     # ── 데이터 소스 표시줄 ──
@@ -501,12 +647,14 @@ app.layout = html.Div([
 
     # ── 스토어 & 인터벌 ──
     dcc.Store(id="selected-card-store", data=None),
+    dcc.Store(id="user-location-store", data=None),
+    dcc.Store(id="nearby-pharmacies-store", data=None),
     # 1분마다 현재시간 갱신 (운영 상태 자동 업데이트)
     dcc.Interval(id="clock-interval", interval=60_000, n_intervals=0),
 ])
 
 
-# ===== 6. 콜백 =====
+# ===== 8. 콜백 (상호작용 처리) =====
 
 # (A) 시계 업데이트
 @app.callback(
@@ -553,18 +701,33 @@ def update_banner(_):
     Input("search-input", "value"),
     Input("district-filter", "value"),
     Input("pharmacy-type-filter", "value"),
+    Input("nearby-pharmacies-store", "data"),
     Input("clock-interval", "n_intervals"),
 )
-def update_sidebar(search_val, district_val, type_filter, _intervals):
+def update_sidebar(search_val, district_val, type_filter, nearby_data, _intervals):
     dt = now_kst()
     dff = df_pharmacies.copy()
 
+    # 근처 약국 필터링 (GPS/위치입력 기반)
+    show_nearby = False
+    nearby_info_dict = {}
+    if nearby_data:
+        nearby_ids = nearby_data.get("pharmacy_ids", [])
+        nearby_info = nearby_data.get("info", [])
+        if nearby_ids and nearby_info:
+            show_nearby = True
+            # 거리순으로 정렬된 약국들로 필터링
+            dff = dff[dff["id"].isin(nearby_ids)]
+            # nearby_info의 순서대로 정렬
+            dff = dff.set_index("id").loc[[p["id"] for p in nearby_info]].reset_index()
+            nearby_info_dict = {p["id"]: p for p in nearby_info}
+
     # 구 필터
-    if district_val and district_val != "전체":
+    if district_val and district_val != "전체" and not show_nearby:
         dff = dff[dff["district"] == district_val]
 
     # 검색 필터
-    if search_val:
+    if search_val and not show_nearby:
         q = search_val.lower().strip()
         dff = dff[
             dff["name"].str.lower().str.contains(q, na=False) |
@@ -572,12 +735,15 @@ def update_sidebar(search_val, district_val, type_filter, _intervals):
         ]
 
     # 운영 상태 / 심야 필터
-    if type_filter == "open":
+    if type_filter == "open" and not show_nearby:
         dff = dff[dff.apply(lambda r: is_open_now(r.to_dict(), dt), axis=1)]
-    elif type_filter == "night":
+    elif type_filter == "night" and not show_nearby:
         dff = dff[dff["is_night"] == True]
 
+    # 통계 문자열
     count_str = f"{len(dff):,}개"
+    if show_nearby:
+        count_str = f"⭐ 근처 {len(dff)}개"
 
     cards = []
     for _, row in dff.iterrows():
@@ -595,9 +761,20 @@ def update_sidebar(search_val, district_val, type_filter, _intervals):
         # 심야약국 특수 뱃지
         night_badge = html.Span(" 🌙 심야약국", className="badge-night") if night else None
 
-        # 운영시간 요약 (최대 2개 요일만 표시)
+        # 운영시간 요약
         ops = get_operating_summary(row_dict)
         ops_short = ops[:60] + '...' if len(ops) > 60 else ops
+
+        # 근처 약국 정보 추가
+        distance_text = ""
+        rank_text = ""
+        if show_nearby and row["id"] in nearby_info_dict:
+            info = nearby_info_dict[row["id"]]
+            distance_text = f" • {info['distance']:.2f}km"
+            rank_text = f"#{info['rank']} "
+            badge_color = "#ff6b6b"  # 강조 색상
+        else:
+            badge_color = color
 
         card_style = {
             "padding": "12px 14px", "borderRadius": "12px",
@@ -609,12 +786,14 @@ def update_sidebar(search_val, district_val, type_filter, _intervals):
         if night:
             card_style["borderColor"] = "rgba(183,148,244,0.35)"
             card_style["backgroundColor"] = "rgba(159,122,234,0.06)"
+        if show_nearby:
+            card_style["borderColor"] = "rgba(255,107,107,0.35)"
 
         card = html.Div([
             # 상단 행: 구 뱃지 + 상태뱃지
             html.Div([
-                html.Span(row["district"], style={
-                    "backgroundColor": f"{color}22", "color": color,
+                html.Span(f"{rank_text}{row['district']}", style={
+                    "backgroundColor": f"{badge_color}22", "color": badge_color,
                     "padding": "2px 8px", "borderRadius": "10px",
                     "fontSize": "11px", "fontWeight": "700"
                 }),
@@ -628,7 +807,7 @@ def update_sidebar(search_val, district_val, type_filter, _intervals):
                 "color": "#fff", "marginBottom": "4px"
             }),
             # 주소
-            html.Div(f"📍 {row['address']}", style={
+            html.Div(f"📍 {row['address']}{distance_text}", style={
                 "fontSize": "11px", "color": "#a0aec0",
                 "marginBottom": "3px", "lineHeight": "1.4"
             }),
@@ -656,6 +835,8 @@ def update_sidebar(search_val, district_val, type_filter, _intervals):
             "night": "🌙 공공심야약국이 없습니다.",
             "all": "조건에 맞는 약국이 없습니다."
         }.get(type_filter, "조건에 맞는 약국이 없습니다.")
+        if show_nearby:
+            msg = "📍 주변에 검색된 약국이 없습니다."
         cards.append(html.Div(msg, style={
             "color": "#718096", "textAlign": "center",
             "marginTop": "40px", "fontSize": "13px", "lineHeight": "1.8"
@@ -671,23 +852,33 @@ def update_sidebar(search_val, district_val, type_filter, _intervals):
     Input("district-filter", "value"),
     Input("pharmacy-type-filter", "value"),
     Input("selected-card-store", "data"),
+    Input("nearby-pharmacies-store", "data"),
     Input("clock-interval", "n_intervals"),
 )
-def update_map(search_val, district_val, type_filter, selected_data, _intervals):
+def update_map(search_val, district_val, type_filter, selected_data, nearby_data, _intervals):
     dt = now_kst()
     dff = df_pharmacies.copy()
 
-    if district_val and district_val != "전체":
+    show_nearby = False
+    user_coords = None
+    if nearby_data:
+        nearby_ids = nearby_data.get("pharmacy_ids", [])
+        if nearby_ids:
+            show_nearby = True
+            dff = dff[dff["id"].isin(nearby_ids)]
+            user_coords = nearby_data.get("user_location")
+
+    if district_val and district_val != "전체" and not show_nearby:
         dff = dff[dff["district"] == district_val]
-    if search_val:
+    if search_val and not show_nearby:
         q = search_val.lower().strip()
         dff = dff[
             dff["name"].str.lower().str.contains(q, na=False) |
             dff["address"].str.lower().str.contains(q, na=False)
         ]
-    if type_filter == "open":
+    if type_filter == "open" and not show_nearby:
         dff = dff[dff.apply(lambda r: is_open_now(r.to_dict(), dt), axis=1)]
-    elif type_filter == "night":
+    elif type_filter == "night" and not show_nearby:
         dff = dff[dff["is_night"] == True]
 
     # 운영 상태 + 심야 분류
@@ -697,12 +888,21 @@ def update_map(search_val, district_val, type_filter, selected_data, _intervals)
     center_lat, center_lng = 36.3504, 127.3845
     zoom_level = 11.5
 
+    # 우선순위 1: 선택된 카드로 포커싱
     if selected_data is not None:
         target_row = dff[dff["id"] == selected_data]
         if not target_row.empty:
             center_lat = target_row.iloc[0]["lat"]
             center_lng = target_row.iloc[0]["lon"]
             zoom_level = 15.5
+    # 우선순위 2: 근처 약국(GPS/위치입력)으로 포커싱
+    elif show_nearby and not dff.empty:
+        center_lat = dff["lat"].mean()
+        center_lng = dff["lon"].mean()
+        zoom_level = 13.5
+        if user_coords:
+            center_lat = user_coords.get("lat", center_lat)
+            center_lng = user_coords.get("lng", center_lng)
 
     fig = go.Figure()
 
@@ -748,8 +948,7 @@ def update_map(search_val, district_val, type_filter, selected_data, _intervals)
         fig.add_trace(go.Scattermapbox(
             lat=df_night_closed['lat'], lon=df_night_closed['lon'],
             mode='markers',
-            marker=dict(size=11, color='#9f7aea', opacity=0.6,
-                        symbol='circle'),
+            marker=dict(size=11, color='#9f7aea', opacity=0.6, symbol='circle'),
             text=df_night_closed['name'],
             customdata=df_night_closed[['address', 'phone', 'district']].values,
             hovertemplate=(
@@ -777,6 +976,17 @@ def update_map(search_val, district_val, type_filter, selected_data, _intervals)
                 "🟢 지금 운영 중인 심야약국!<extra></extra>"
             ),
             name='🌙 심야약국 (운영 중)'
+        ))
+
+    # ── 사용자 위치 표시 ──
+    if user_coords:
+        fig.add_trace(go.Scattermapbox(
+            lat=[user_coords.get("lat")], lon=[user_coords.get("lng")],
+            mode='markers',
+            marker=dict(size=18, color='#3182ce', opacity=0.9, symbol='star'),
+            text=['내 위치'],
+            hovertemplate="<b>📍 내 위치</b><extra></extra>",
+            name='📍 내 위치'
         ))
 
     fig.update_layout(
@@ -817,7 +1027,120 @@ def handle_card_click(n_clicks_list, id_list):
     return None
 
 
-# ===== 7. 백그라운드 API 갱신 (캐시 없을 때 비동기 수집) =====
+# (F) 사용자 위치 기반 근처 약국 5개 계산
+@app.callback(
+    Output("nearby-pharmacies-store", "data"),
+    Input("user-location-store", "data"),
+    Input("location-input", "value"),
+    prevent_initial_call=True
+)
+def calculate_nearby_pharmacies(location_data, location_text):
+    """
+    GPS 위치 또는 주소 입력을 기반으로 근처 약국 5개 계산
+    우선순위: GPS(위치 추적) > 주소 입력
+    """
+    user_lat = None
+    user_lng = None
+    source = None
+    
+    # 1. GPS 데이터 우선 (위치 추적 허용 시)
+    if location_data and location_data.get("lat") is not None:
+        user_lat = location_data.get("lat")
+        user_lng = location_data.get("lng")
+        source = "gps"
+    
+    # 2. 주소 입력 처리 (위치 추적 미허용 시)
+    elif location_text and len(location_text.strip()) >= 2:
+        coords = infer_coordinates_from_address(location_text, df_pharmacies)
+        if coords:
+            user_lat = coords["lat"]
+            user_lng = coords["lon"]  # Note: we use 'lon' in df_pharmacies
+            source = "address_input"
+    
+    # 좌표가 없으면 None 반환
+    if user_lat is None or user_lng is None:
+        return None
+    
+    # 모든 약국과의 거리 계산
+    distances = []
+    for _, row in df_pharmacies.iterrows():
+        dist = calculate_distance(user_lat, user_lng, row["lat"], row["lon"])
+        distances.append({
+            "id": row["id"],
+            "name": row["name"],
+            "address": row["address"],
+            "phone": row["phone"],
+            "distance": dist,
+            "lat": row["lat"],
+            "lon": row["lon"],
+            "district": row["district"]
+        })
+    
+    # 거리순으로 정렬하여 상위 5개 선택
+    distances.sort(key=lambda x: x["distance"])
+    nearby_5 = distances[:5]
+    
+    # 정보 추가 (순위, 거리 등)
+    pharmacy_info = []
+    for rank, pharm in enumerate(nearby_5, 1):
+        pharmacy_info.append({
+            "id": pharm["id"],
+            "rank": rank,
+            "distance": pharm["distance"],
+            "name": pharm["name"]
+        })
+    
+    return {
+        "pharmacy_ids": [p["id"] for p in nearby_5],
+        "info": pharmacy_info,
+        "user_location": {"lat": user_lat, "lng": user_lng},
+        "source": source
+    }
+
+
+# Clientside callback to get browser geolocation
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks || n_clicks === 0) {
+            return window.dash_clientside.no_update;
+        }
+        
+        // Geolocation API 호출
+        return new Promise(function(resolve) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        resolve({
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            timestamp: new Date().toISOString()
+                        });
+                    },
+                    function(error) {
+                        console.error('위치 정보 오류:', error);
+                        resolve({
+                            lat: 36.3209,
+                            lng: 127.4209,
+                            error: error.message
+                        });
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            } else {
+                resolve({ error: 'Geolocation not supported' });
+            }
+        });
+    }
+    """,
+    Output("user-location-store", "data"),
+    Input("gps-button", "n_clicks"),
+    prevent_initial_call=True
+)
+
+
+# ===== 9. 백그라운드 API 갱신 (캐시 없을 때 비동기 수집) =====
 def background_api_fetch():
     """앱 시작 후 백그라운드에서 API 데이터 수집 (캐시 없을 때만)"""
     if os.path.exists(API_CACHE_FILE):
@@ -845,4 +1168,11 @@ if __name__ == "__main__":
 
     print("🚀 대전 약국 대시보드 서버 시작...")
     print("👉 로컬 접속: http://127.0.0.1:8050/")
-    app.run(debug=debug_mode, host="0.0.0.0", port=8050)
+    
+    app.run(
+        host="0.0.0.0",
+        port=8050,
+        debug=debug_mode,
+        dev_tools_hot_reload=False,
+        dev_tools_ui=False
+    )
