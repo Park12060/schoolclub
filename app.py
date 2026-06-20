@@ -15,7 +15,7 @@ CSV_CONFIGS = [
     {"file": "대전광역시 동구 약국 현황_20250701.csv", "gu": "동구", "cols": {"name": 1, "addr": 3, "phone": 2}},
     {"file": "대전광역시 대덕구_약국정보_20250101.csv", "gu": "대덕구", "cols": {"name": 0, "addr": 1, "phone": 2}},
     {"file": "대전광역시 유성구_약국현황_20250731.csv", "gu": "유성구", "cols": {"name": 2, "addr": 3, "phone": 4}},
-    {"file": "대전광역시 중구 약국 정보_20250905.csv", "gu": "중구", "cols": {"name": 1, "addr": 4, "phone": 2}}
+    {"file": "대전광역시 중구 약국 정보_20250905 (1).csv", "gu": "중구", "cols": {"name": 1, "addr": 4, "phone": 2}}
 ]
 
 # 구별 중심 좌표 (Fallback Jitter용)
@@ -116,7 +116,8 @@ def load_integrated_data():
                             "phone": phone if phone else "정보 없음",
                             "lat": lat,
                             "lng": lng,
-                            "color": GU_COLORS[cfg["gu"]]
+                            "color": GU_COLORS[cfg["gu"]],
+                            "tylenol_stock": random.randint(60, 70)
                         })
                         idx_counter += 1
         except Exception as e:
@@ -124,7 +125,7 @@ def load_integrated_data():
             
     return pd.DataFrame.from_records(
         records,
-        columns=["id", "district", "name", "address", "phone", "lat", "lng", "color"]
+        columns=["id", "district", "name", "address", "phone", "lat", "lng", "color", "tylenol_stock"]
     )
 
 df_pharmacies = load_integrated_data()
@@ -263,6 +264,7 @@ app.layout = html.Div([
         html.Div(
             [dcc.Input(
                 id="location-input", type="text", placeholder="📍 현재 위치 입력 (예: 서구, 중구, 약국명...)",
+                debounce=True,
                 style={
                     "width": "280px", "padding": "10px 16px", "borderRadius": "20px",
                     "border": "1px solid rgba(99,179,237,0.3)", "backgroundColor": "rgba(255,255,255,0.05)",
@@ -290,6 +292,7 @@ app.layout = html.Div([
         html.Div([
             dcc.Input(
                 id="search-input", type="text", placeholder="약국명 또는 주소 검색...",
+                debounce=True,
                 style={
                     "width": "280px", "padding": "10px 16px", "borderRadius": "20px",
                     "border": "1px solid rgba(99,179,237,0.3)", "backgroundColor": "rgba(255,255,255,0.05)",
@@ -398,15 +401,23 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
         location_val = location_val.lower().strip()
         dff = dff[dff["address"].str.lower().str.contains(location_val, regex=False, na=False)]
         
+    is_tylenol_search = False
     if search_val and not show_nearby:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        is_tylenol_search = "타이레놀" in search_val
+        if not is_tylenol_search:
+            dff = dff[dff["name"].str.lower().str.contains(search_val) | 
+                      dff["address"].str.lower().str.contains(search_val)]
         
     # 통계 문자열
-    count_str = f"{len(dff):,}개"
+    total_count = len(dff)
+    count_str = f"{total_count:,}개"
     if show_nearby:
-        count_str = f"⭐ 근처 {len(dff)}개"
+        count_str = f"⭐ 근처 {total_count}개"
+    
+    # 성능 최적화를 위한 렌더링 카드 개수 제한 (최대 100개)
+    limit = 100
+    display_df = dff.head(limit)
     
     # 리스트 카드 생성
     cards = []
@@ -414,7 +425,7 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
     if show_nearby and nearby_data:
         nearby_info_dict = {p["id"]: p for p in nearby_data.get("info", [])}
     
-    for _, row in dff.iterrows():
+    for _, row in display_df.iterrows():
         # 근처 약국 정보 추가
         distance_text = ""
         rank_text = ""
@@ -426,7 +437,7 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
         else:
             badge_color = row["color"]
         
-        card = html.Div([
+        card_content = [
             html.Div([
                 html.Span(f"{rank_text}{row['district']}", style={
                     "backgroundColor": f"{badge_color}22", "color": badge_color,
@@ -439,15 +450,30 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
                 "fontSize": "12px", "color": "#a0aec0", "marginBottom": "4px", "lineHeight": "1.3"
             }),
             html.Div(f"📞 {row['phone']}", style={"fontSize": "12px", "color": "#9f7aea", "fontWeight": "500"})
-        ], 
-        id={"type": "pharm-card", "index": row["id"]},
-        n_clicks=0,
-        style={
-            "padding": "14px", "borderRadius": "12px", "backgroundColor": "rgba(255,255,255,0.03)",
-            "border": "1px solid rgba(255,255,255,0.08)", "cursor": "pointer",
-            "transition": "all 0.2s", "boxShadow": "0 2px 8px rgba(0,0,0,0.2)"
-        })
+        ]
+        
+        if is_tylenol_search:
+            card_content.append(html.Div(f"🧾 타이레놀 재고: {row['tylenol_stock']}개", style={"fontSize": "12px", "color": "#81e6d9", "fontWeight": "600", "marginTop": "6px"}))
+            
+        card = html.Div(
+            card_content,
+            id={"type": "pharm-card", "index": row["id"]},
+            n_clicks=0,
+            style={
+                "padding": "14px", "borderRadius": "12px", "backgroundColor": "rgba(255,255,255,0.03)",
+                "border": "1px solid rgba(255,255,255,0.08)", "cursor": "pointer",
+                "transition": "all 0.2s", "boxShadow": "0 2px 8px rgba(0,0,0,0.2)"
+            })
         cards.append(card)
+        
+    if total_count > limit:
+        cards.append(html.Div([
+            html.Div(f"검색 결과가 너무 많습니다. (총 {total_count}개 중 {limit}개 표시 중)", style={"fontSize": "12px", "fontWeight": "700", "color": "#63b3ed", "marginBottom": "4px"}),
+            html.Div("필터나 검색어를 사용하여 상세 검색을 수행해 주세요.", style={"fontSize": "11px", "color": "#a0aec0"})
+        ], style={
+            "padding": "14px", "borderRadius": "12px", "backgroundColor": "rgba(99,179,237,0.05)",
+            "border": "1px dashed rgba(99,179,237,0.3)", "textAlign": "center"
+        }))
         
     if not cards:
         cards.append(html.Div("조건에 맞는 약국이 없습니다.", style={"color": "#718096", "textAlign": "center", "marginTop": "40px", "fontSize": "14px"}))
@@ -481,10 +507,13 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
         location_val = location_val.lower().strip()
         dff = dff[dff["address"].str.lower().str.contains(location_val, regex=False, na=False)]
         
+    is_tylenol_search = False
     if search_val:
         search_val = search_val.lower().strip()
-        dff = dff[dff["name"].str.lower().str.contains(search_val) | 
-                  dff["address"].str.lower().str.contains(search_val)]
+        is_tylenol_search = "타이레놀" in search_val
+        if not is_tylenol_search:
+            dff = dff[dff["name"].str.lower().str.contains(search_val) | 
+                      dff["address"].str.lower().str.contains(search_val)]
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
@@ -515,12 +544,16 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
         )
         return fig
 
+    hover_data = {"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False}
+    if is_tylenol_search:
+        hover_data["tylenol_stock"] = True
+
     fig = px.scatter_mapbox(
-        dff,
-        lat="lat",
-        lon="lng",
+        dff, 
+        lat="lat", 
+        lon="lng", 
         hover_name="name",
-        hover_data={"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False},
+        hover_data=hover_data,
         color="district",
         color_discrete_map=GU_COLORS,
         size_max=12,
@@ -648,6 +681,10 @@ def calculate_nearby_pharmacies(location_data, location_text):
 
 
 if __name__ == "__main__":
+    import sys, io
+    if sys.stdout.encoding.lower() != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
     # clientside JavaScript 콜백 등록
     app.clientside_callback(
         """
