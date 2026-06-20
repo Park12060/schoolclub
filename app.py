@@ -5,7 +5,7 @@ import math
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from dash import Dash, html, dcc, Input, Output, State, ctx, ClientsideFunction
+from dash import Dash, html, dcc, Input, Output, State, ctx
 
 # ===== 1. 데이터 통합 및 정제 로직 =====
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -240,16 +240,7 @@ app.index_string = '''
                 );
             }
             
-            // GPS 버튼 클릭 이벤트 리스너
-            document.addEventListener('DOMContentLoaded', function() {
-                const gpsBtn = document.getElementById('gps-button');
-                if (gpsBtn) {
-                    gpsBtn.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        getLocation();
-                    });
-                }
-            });
+            // GPS 버튼 클릭 이벤트는 Dash clientside_callback(Input("gps-button", "n_clicks"))에서 처리합니다.
         </script>
     </body>
 </html>
@@ -405,7 +396,7 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
     # 현재 위치 입력이 있으면 주소로 필터링 (근처 약국 표시 시 무시)
     if location_val and not show_nearby:
         location_val = location_val.lower().strip()
-        dff = dff[dff["address"].str.lower().str.contains(location_val)]
+        dff = dff[dff["address"].str.lower().str.contains(location_val, regex=False, na=False)]
         
     if search_val and not show_nearby:
         search_val = search_val.lower().strip()
