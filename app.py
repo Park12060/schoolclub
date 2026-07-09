@@ -11,11 +11,11 @@ from dash import Dash, html, dcc, Input, Output, State, ctx
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CSV_CONFIGS = [
-    {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}},
-    {"file": "대전광역시 동구 약국 현황_20250701.csv", "gu": "동구", "cols": {"name": 1, "addr": 3, "phone": 2}},
-    {"file": "대전광역시 대덕구_약국정보_20250101.csv", "gu": "대덕구", "cols": {"name": 0, "addr": 1, "phone": 2}},
-    {"file": "대전광역시 유성구_약국현황_20250731.csv", "gu": "유성구", "cols": {"name": 2, "addr": 3, "phone": 4}},
-    {"file": "대전광역시 중구 약국 정보_20250905 (1).csv", "gu": "중구", "cols": {"name": 1, "addr": 4, "phone": 2}}
+    {"file": "대전광역시 서구_약국현황_20250820.csv", "gu": "서구", "cols": {"name": 1, "addr": 2, "phone": 3}, "encoding": "euc-kr"},
+    {"file": "대전광역시 동구 약국 현황_20250701.csv", "gu": "동구", "cols": {"name": 1, "addr": 3, "phone": 2}, "encoding": "euc-kr"},
+    {"file": "대전광역시 대덕구_약국정보_20250101.csv", "gu": "대덕구", "cols": {"name": 0, "addr": 1, "phone": 2}, "encoding": "euc-kr"},
+    {"file": "대전광역시 유성구_약국현황_20250731.csv", "gu": "유성구", "cols": {"name": 2, "addr": 3, "phone": 4}, "encoding": "euc-kr"},
+    {"file": "대전광역시 중구 약국 정보_20250905 (1).csv", "gu": "중구", "cols": {"name": 1, "addr": 4, "phone": 2}, "encoding": "utf-8-sig"}
 ]
 
 # 구별 중심 좌표 (Fallback Jitter용)
@@ -60,7 +60,7 @@ def infer_coordinates_from_address(address_text, pharmacies_df):
     """
     입력된 주소 텍스트로부터 좌표 추론
     1. 구 이름과 일치 확인 (예: "서구", "동구")
-    2. 약국 주소와 일치 확인
+    2. 약국명 또는 주소와 일치 확인
     3. 모두 실패 시 None 반환
     """
     if not address_text:
@@ -73,10 +73,10 @@ def infer_coordinates_from_address(address_text, pharmacies_df):
         if gu.lower() in text:
             return {"lat": coords[0], "lng": coords[1], "source": "gu_name"}
     
-    # 2. 약국 주소 검색 (입력된 텍스트 포함)
+    # 2. 약국명 또는 주소 검색 (입력된 텍스트 포함)
     for _, row in pharmacies_df.iterrows():
-        if text in row["address"].lower():
-            return {"lat": row["lat"], "lng": row["lng"], "source": "pharmacy_address", "name": row["name"]}
+        if text in row["name"].lower() or text in row["address"].lower():
+            return {"lat": row["lat"], "lng": row["lng"], "source": "pharmacy_search", "name": row["name"]}
     
     return None
 
@@ -90,7 +90,8 @@ def load_integrated_data():
         
         base_lat, base_lng = FALLBACK_COORDS[cfg["gu"]]
         try:
-            with open(file_path, encoding="euc-kr", errors="ignore") as f:
+            enc = cfg.get("encoding", "euc-kr")
+            with open(file_path, encoding=enc, errors="ignore") as f:
                 reader = csv.reader(f)
                 next(reader)  # 헤더 스킵
                 for row in reader:
@@ -117,7 +118,7 @@ def load_integrated_data():
                             "lat": lat,
                             "lng": lng,
                             "color": GU_COLORS[cfg["gu"]],
-                            "tylenol_stock": random.randint(60, 70)
+                            "tylenol_stock": random.randint(0, 50)
                         })
                         idx_counter += 1
         except Exception as e:
@@ -160,6 +161,53 @@ app.index_string = '''
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background: rgba(99, 179, 237, 0.3); border-radius: 3px; }
             ::-webkit-scrollbar-thumb:hover { background: rgba(99, 179, 237, 0.5); }
+
+            /* Glassmorphism Card Style */
+            .pharm-card {
+                padding: 14px;
+                border-radius: 12px;
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                cursor: pointer;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            }
+            .pharm-card:hover {
+                background: rgba(255, 255, 255, 0.07);
+                border-color: rgba(99, 179, 237, 0.4);
+                transform: translateY(-2px);
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+            }
+            .pharm-card.selected {
+                background: rgba(99, 179, 237, 0.08);
+                border-color: rgba(99, 179, 237, 0.8);
+                box-shadow: 0 0 15px rgba(99, 179, 237, 0.25);
+            }
+
+            /* Custom Styled Filter Labels */
+            #district-filter label {
+                padding: 6px 14px;
+                border-radius: 20px;
+                font-size: 13px;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                background-color: rgba(255, 255, 255, 0.05);
+                cursor: pointer;
+                transition: all 0.2s ease;
+                display: inline-block;
+                color: #a0aec0;
+            }
+            #district-filter label:hover {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #fff;
+                border-color: rgba(255, 255, 255, 0.3);
+            }
+            #district-filter label:has(input:checked) {
+                background: linear-gradient(135deg, rgba(99, 179, 237, 0.35), rgba(159, 122, 234, 0.35));
+                border-color: rgba(99, 179, 237, 0.8);
+                color: #fff;
+                box-shadow: 0 0 10px rgba(99, 179, 237, 0.25);
+                font-weight: 700;
+            }
         </style>
     </head>
     <body>
@@ -375,9 +423,10 @@ app.layout = html.Div([
     Input("search-input", "value"),
     Input("location-input", "value"),
     Input("district-filter", "value"),
-    Input("nearby-pharmacies-store", "data")
+    Input("nearby-pharmacies-store", "data"),
+    Input("selected-card-store", "data")
 )
-def update_sidebar(search_val, location_val, district_val, nearby_data):
+def update_sidebar(search_val, location_val, district_val, nearby_data, selected_card_id):
     dff = df_pharmacies.copy()
     
     # 근처 약국 필터링 (GPS 기반)
@@ -408,6 +457,9 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
         if not is_tylenol_search:
             dff = dff[dff["name"].str.lower().str.contains(search_val) | 
                       dff["address"].str.lower().str.contains(search_val)]
+        else:
+            # 타이레놀 검색 시 재고량 순 정렬
+            dff = dff.sort_values(by="tylenol_stock", ascending=False)
         
     # 통계 문자열
     total_count = len(dff)
@@ -455,15 +507,16 @@ def update_sidebar(search_val, location_val, district_val, nearby_data):
         if is_tylenol_search:
             card_content.append(html.Div(f"🧾 타이레놀 재고: {row['tylenol_stock']}개", style={"fontSize": "12px", "color": "#81e6d9", "fontWeight": "600", "marginTop": "6px"}))
             
+        # 선택 상태 체크 및 클래스네임 할당
+        is_selected = (selected_card_id == row["id"])
+        card_class = "pharm-card selected" if is_selected else "pharm-card"
+
         card = html.Div(
             card_content,
             id={"type": "pharm-card", "index": row["id"]},
             n_clicks=0,
-            style={
-                "padding": "14px", "borderRadius": "12px", "backgroundColor": "rgba(255,255,255,0.03)",
-                "border": "1px solid rgba(255,255,255,0.08)", "cursor": "pointer",
-                "transition": "all 0.2s", "boxShadow": "0 2px 8px rgba(0,0,0,0.2)"
-            })
+            className=card_class
+        )
         cards.append(card)
         
     if total_count > limit:
@@ -514,6 +567,9 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
         if not is_tylenol_search:
             dff = dff[dff["name"].str.lower().str.contains(search_val) | 
                       dff["address"].str.lower().str.contains(search_val)]
+        else:
+            # 타이레놀 검색 시 재고량 순 정렬
+            dff = dff.sort_values(by="tylenol_stock", ascending=False)
         
     # 기본 중심 및 줌 레벨
     center_lat, center_lng = 36.3504, 127.3845
@@ -545,8 +601,17 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
         return fig
 
     hover_data = {"address": True, "phone": True, "lat": False, "lng": False, "district": False, "color": False}
+    
+    # 타이레놀 검색 시 마커 크기 및 레이블 구성
     if is_tylenol_search:
         hover_data["tylenol_stock"] = True
+        # 품절 상태(0개) 약국도 최소 5px 마커 크기를 확보해 지도상에 나타나도록 함
+        dff["marker_size"] = dff["tylenol_stock"] + 5
+        size_col = "marker_size"
+        size_max_val = 20
+    else:
+        size_col = None
+        size_max_val = 12
 
     fig = px.scatter_mapbox(
         dff, 
@@ -556,13 +621,24 @@ def update_map(search_val, location_val, district_val, selected_data, nearby_dat
         hover_data=hover_data,
         color="district",
         color_discrete_map=GU_COLORS,
-        size_max=12,
+        size=size_col,
+        size_max=size_max_val,
         zoom=zoom_level,
-        center={"lat": center_lat, "lon": center_lng}
+        center={"lat": center_lat, "lon": center_lng},
+        labels={
+            "tylenol_stock": "타이레놀 재고 (개)",
+            "address": "주소",
+            "phone": "전화번호",
+            "district": "구분"
+        }
     )
     
     # Mapbox 스타일 및 여백 설정 (carto-darkmatter 오픈소스 타일 적용)
-    fig.update_traces(marker=dict(size=10, opacity=0.85))
+    if is_tylenol_search:
+        fig.update_traces(marker=dict(opacity=0.85))
+    else:
+        fig.update_traces(marker=dict(size=10, opacity=0.85))
+
     fig.update_layout(
         mapbox_style="carto-darkmatter",
         margin={"r":0, "t":0, "l":0, "b":0},
@@ -619,25 +695,25 @@ def handle_card_click(n_clicks_list, id_list):
 def calculate_nearby_pharmacies(location_data, location_text):
     """
     GPS 위치 또는 주소 입력을 기반으로 근처 약국 5개 계산
-    우선순위: GPS(위치 추적) > 주소 입력
+    우선순위: 주소 입력(명시적 검색) > GPS(위치 추적)
     """
     user_lat = None
     user_lng = None
     source = None
     
-    # 1. GPS 데이터 우선 (위치 추적 허용 시)
-    if location_data and location_data.get("lat") is not None:
-        user_lat = location_data.get("lat")
-        user_lng = location_data.get("lng")
-        source = "gps"
-    
-    # 2. 주소 입력 처리 (위치 추적 미허용 시)
-    elif location_text and len(location_text.strip()) >= 2:
+    # 1. 주소 입력 처리 우선 (명시적인 위치 검색어 입력 시)
+    if location_text and len(location_text.strip()) >= 2:
         coords = infer_coordinates_from_address(location_text, df_pharmacies)
         if coords:
             user_lat = coords["lat"]
             user_lng = coords["lng"]
             source = "address_input"
+    
+    # 2. GPS 데이터 차선 (검색어가 없고, 위치 추적 허용 시)
+    if user_lat is None and location_data and location_data.get("lat") is not None:
+        user_lat = location_data.get("lat")
+        user_lng = location_data.get("lng")
+        source = "gps"
     
     # 좌표가 없으면 None 반환
     if user_lat is None or user_lng is None:
